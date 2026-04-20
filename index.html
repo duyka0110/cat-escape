@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#17191f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Catrow</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <section id="game-shell">
+        <header id="houses"></header>
+        <section id="playfield">
+          <svg id="road-layer" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+          <div id="grid-board"></div>
+          <div id="runner-layer"></div>
+        </section>
+        <footer id="controls">
+          <details id="help-popover">
+            <summary id="help-btn">Help</summary>
+            <div id="legend" aria-label="Cat types">
+              <ul class="legend-list">
+                <li class="legend-row">
+                  <span class="legend-swatch red" aria-hidden="true"></span>
+                  <span><strong>Red</strong> — long straight slider.</span>
+                </li>
+                <li class="legend-row">
+                  <span class="legend-swatch green" aria-hidden="true"></span>
+                  <span><strong>Green</strong> — starts asleep and wakes when bumped.</span>
+                </li>
+                <li class="legend-row">
+                  <span class="legend-swatch blue" aria-hidden="true"></span>
+                  <span><strong>Blue</strong> — reverses once per tap after first bump.</span>
+                </li>
+                <li class="legend-row">
+                  <span class="legend-swatch yellow" aria-hidden="true"></span>
+                  <span><strong>Yellow</strong> — can hop one cat if landing is clear, then keeps going.</span>
+                </li>
+                <li class="legend-row">
+                  <span class="legend-swatch brown" aria-hidden="true"></span>
+                  <span><strong>Brown</strong> — on bump, turns 90° (prefers CCW) with tail on the old head cell.</span>
+                </li>
+                <li class="legend-row">
+                  <span class="legend-swatch purple" aria-hidden="true"></span>
+                  <span><strong>Purple</strong> — loaf or stretch along its arrow; bump toggles if there is room (head-ward first).</span>
+                </li>
+              </ul>
+            </div>
+          </details>
+          <button id="regen-btn" type="button">New Puzzle</button>
+          <p id="status">Tap a cat to move.</p>
+        </footer>
+      </section>
+    </main>
+    <script src="./game.js"></script>
+  </body>
+</html>

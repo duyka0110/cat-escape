@@ -1,0 +1,347 @@
+:root {
+  --bg: #17191f;
+  --panel: #252a35;
+  --text: #f6f8ff;
+  --grid-bg: #11141a;
+  --grid-line: #2d3442;
+  --road: #727c91;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+  background: radial-gradient(circle at top, #202633, var(--bg));
+  color: var(--text);
+  font-family: "Inter", "Avenir Next", "Helvetica Neue", sans-serif;
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+  display: grid;
+  place-items: start center;
+  padding: env(safe-area-inset-top) max(0.65rem, env(safe-area-inset-right))
+    max(0.45rem, env(safe-area-inset-bottom)) max(0.65rem, env(safe-area-inset-left));
+}
+
+#game-shell {
+  /* Prefer dynamic viewport on mobile so the board fits above browser chrome. */
+  width: min(95vw, calc(95vh * 9 / 16));
+  height: min(95vh, calc(95vw * 16 / 9));
+  max-height: 100vh;
+  aspect-ratio: 9 / 16;
+  border-radius: 0 0 22px 22px;
+  background: linear-gradient(180deg, #2c3442, #1d2330);
+  box-shadow: 0 20px 40px rgb(0 0 0 / 45%);
+  padding: 0.5rem 0.75rem 0.7rem;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 0.5rem;
+}
+
+@supports (height: 100dvh) {
+  #game-shell {
+    width: min(95vw, calc(95dvh * 9 / 16));
+    height: min(95dvh, calc(95vw * 16 / 9));
+    max-height: 100dvh;
+  }
+}
+
+#houses {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.3rem;
+  max-width: 14rem;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.house {
+  border-radius: 14px;
+  padding: 0.35rem 0.38rem;
+  text-align: center;
+  font-size: 0.74rem;
+  line-height: 0.95rem;
+  background: #1a202b;
+  border: 2px solid transparent;
+}
+
+.house-name {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.house-count {
+  opacity: 0.9;
+  font-size: 0.66rem;
+}
+
+.house.red {
+  border-color: #ff5e6c;
+}
+.house.green {
+  border-color: #58d47a;
+}
+.house.blue {
+  border-color: #5e9bff;
+}
+
+.house.home {
+  border-color: #ffd66f;
+  max-width: none;
+}
+
+#playfield {
+  position: relative;
+  min-height: 0;
+}
+
+#grid-board {
+  position: absolute;
+  inset: auto;
+  border-radius: 12px;
+  background: var(--grid-bg);
+  overflow: hidden;
+}
+
+.grid-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cat {
+  position: absolute;
+  border: 2px solid rgb(255 255 255 / 30%);
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: transform 120ms ease;
+  user-select: none;
+  overflow: hidden;
+  padding: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cat:active {
+  transform: scale(0.97);
+}
+
+.cat:disabled {
+  cursor: default;
+}
+
+.cat-sleeping {
+  opacity: 0.92;
+}
+
+.cat-sleep-label {
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: rgb(255 255 255 / 85%);
+}
+
+.cat-arrow {
+  display: inline-block;
+  font-size: 0.92rem;
+  line-height: 1;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 20%);
+}
+
+.cat.red {
+  background: #ff4b5f;
+}
+.cat.green {
+  background: #2fc760;
+}
+.cat.blue {
+  background: #4b86f8;
+}
+
+.cat.purple {
+  background: #a855f7;
+}
+
+.cat.yellow {
+  background: #f5d547;
+  color: #2b2100;
+}
+
+.cat.brown {
+  background: #a2845e;
+  color: #f6f8ff;
+}
+
+.cat.cat-loaf {
+  border-radius: 14px;
+}
+
+.cat-jumping {
+  z-index: 4;
+  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 35%));
+}
+
+.cat-runner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 40%);
+  pointer-events: none;
+}
+
+#road-layer,
+#runner-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.road-stroke {
+  fill: none;
+  stroke: var(--road);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 0;
+}
+
+#legend {
+  display: grid;
+  gap: 0.35rem;
+  width: min(72vw, 16.5rem);
+  font-size: 0.68rem;
+  line-height: 1.3;
+  opacity: 0.97;
+  background: #151a24;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 10px;
+  padding: 0.45rem 0.5rem;
+  box-shadow: 0 12px 24px rgb(0 0 0 / 35%);
+}
+
+.legend-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  text-align: left;
+}
+
+.legend-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.legend-swatch {
+  flex-shrink: 0;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 4px;
+  margin-top: 0.1rem;
+  border: 1px solid rgb(255 255 255 / 28%);
+}
+
+.legend-swatch.red {
+  background: #ff4b5f;
+}
+
+.legend-swatch.green {
+  background: #2fc760;
+}
+
+.legend-swatch.blue {
+  background: #4b86f8;
+}
+
+.legend-swatch.purple {
+  background: #a855f7;
+}
+
+.legend-swatch.yellow {
+  background: #f5d547;
+}
+
+.legend-swatch.brown {
+  background: #a2845e;
+}
+
+#controls {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  position: relative;
+  padding-left: 3.8rem;
+}
+
+#help-popover {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+}
+
+#help-btn {
+  list-style: none;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 999px;
+  padding: 0.38rem 0.72rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background: #1f2531;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+#help-btn::-webkit-details-marker {
+  display: none;
+}
+
+#help-popover > #legend {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.35rem);
+}
+
+#help-popover:not([open]) > #legend {
+  display: none;
+}
+
+#regen-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 0.58rem 1.1rem;
+  min-height: 44px;
+  background: #ffd66f;
+  color: #2b2100;
+  font-weight: 700;
+  font-size: 0.86rem;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#status {
+  margin: 0;
+  font-size: 0.75rem;
+  opacity: 0.92;
+}
