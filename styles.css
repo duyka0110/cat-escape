@@ -49,7 +49,7 @@ body {
   box-shadow: 0 20px 40px rgb(0 0 0 / 45%);
   padding: 0.5rem 0.75rem 0.7rem;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: 1fr auto;
   gap: 0.5rem;
 }
 
@@ -62,22 +62,22 @@ body {
 }
 
 #houses {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.3rem;
-  max-width: 14rem;
-  margin: 0 auto;
-  width: 100%;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .house {
+  position: absolute;
   border-radius: 14px;
-  padding: 0.35rem 0.38rem;
+  padding: 0.3rem 0.38rem;
   text-align: center;
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   line-height: 0.95rem;
   background: #1a202b;
   border: 2px solid transparent;
+  min-width: 5.4rem;
+  max-width: 7rem;
 }
 
 .house-name {
@@ -87,7 +87,7 @@ body {
 
 .house-count {
   opacity: 0.9;
-  font-size: 0.66rem;
+  font-size: 0.61rem;
 }
 
 .house.red {
@@ -103,6 +103,61 @@ body {
 .house.home {
   border-color: #ffd66f;
   max-width: none;
+}
+
+.house.side-top,
+.house.side-bottom,
+.house.side-left,
+.house.side-right {
+  z-index: 3;
+}
+
+.req-pills,
+.wait-pills {
+  display: flex;
+  justify-content: center;
+  gap: 0.18rem;
+  margin-top: 0.2rem;
+}
+
+.req-pill,
+.wait-pill,
+.wait-slot {
+  width: 0.66rem;
+  height: 0.66rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 30%);
+}
+
+.req-pill.dimmed {
+  opacity: 0.25;
+}
+
+.wait-slot {
+  background: rgb(255 255 255 / 8%);
+}
+
+.wait-slot.filled {
+  border-color: rgb(255 255 255 / 55%);
+}
+
+.waitlist {
+  position: absolute;
+  top: 0.15rem;
+  left: 50%;
+  transform: translate(-50%, 0);
+  background: rgb(10 12 18 / 86%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 10px;
+  padding: 0.24rem 0.34rem;
+  min-width: 8.2rem;
+  text-align: center;
+}
+
+.wait-title {
+  font-size: 0.56rem;
+  opacity: 0.85;
+  margin-bottom: 0.1rem;
 }
 
 #playfield {
@@ -213,6 +268,9 @@ body {
 #runner-layer {
   position: absolute;
   inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
@@ -286,18 +344,37 @@ body {
   background: #a2845e;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 #controls {
-  display: grid;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 0.35rem;
-  position: relative;
-  padding-left: 3.8rem;
+  width: 100%;
+}
+
+.controls-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  justify-items: center;
+  gap: 0.4rem;
+  width: 100%;
 }
 
 #help-popover {
-  position: absolute;
-  left: 0;
-  bottom: 0;
+  position: relative;
 }
 
 #help-btn {
@@ -327,11 +404,35 @@ body {
   display: none;
 }
 
+.level-select-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+}
+
+#level-select {
+  width: 100%;
+  max-width: 9.5rem;
+  min-height: 44px;
+  padding: 0.38rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  background: #1f2531;
+  color: var(--text);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 #regen-btn {
   border: none;
   border-radius: 999px;
   padding: 0.58rem 1.1rem;
   min-height: 44px;
+  width: 100%;
+  max-width: 9.5rem;
   background: #ffd66f;
   color: #2b2100;
   font-weight: 700;

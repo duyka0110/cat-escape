@@ -15,16 +15,17 @@
   <body>
     <main id="app">
       <section id="game-shell">
-        <header id="houses"></header>
         <section id="playfield">
           <svg id="road-layer" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
           <div id="grid-board"></div>
           <div id="runner-layer"></div>
+          <div id="houses"></div>
         </section>
         <footer id="controls">
-          <details id="help-popover">
-            <summary id="help-btn">Help</summary>
-            <div id="legend" aria-label="Cat types">
+          <div class="controls-row" role="toolbar" aria-label="Game controls">
+            <details id="help-popover">
+              <summary id="help-btn">Help</summary>
+              <div id="legend" aria-label="Cat types">
               <ul class="legend-list">
                 <li class="legend-row">
                   <span class="legend-swatch red" aria-hidden="true"></span>
@@ -52,8 +53,19 @@
                 </li>
               </ul>
             </div>
-          </details>
-          <button id="regen-btn" type="button">New Puzzle</button>
+            </details>
+            <label class="level-select-wrap">
+              <span class="visually-hidden">Level</span>
+              <select id="level-select" aria-label="Level">
+                <option value="1">Level 1</option>
+                <option value="2">Level 2</option>
+                <option value="3">Level 3</option>
+                <option value="4">Level 4</option>
+                <option value="5" selected>Level 5</option>
+              </select>
+            </label>
+            <button id="regen-btn" type="button">New Puzzle</button>
+          </div>
           <p id="status">Tap a cat to move.</p>
         </footer>
       </section>

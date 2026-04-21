@@ -1,17 +1,34 @@
 const CONFIG = {
-  cols: 10,
+  cols: 13,
   rows: 15,
   baseColors: ["red", "green", "blue"],
-  /** Spawning pool includes purple (loaf / stretch handled per cat). */
-  colorPool: ["red", "green", "blue", "yellow", "brown", "purple"],
   minCats: 30,
   maxCats: 50,
 };
 
+/** Level → cat colors allowed in generated puzzles (spawning uses this pool only). */
+const LEVEL_COLOR_POOLS = {
+  1: ["red"],
+  2: ["red", "green"],
+  3: ["red", "green", "blue"],
+  4: ["red", "green", "yellow"],
+  5: ["red", "green", "yellow", "blue"],
+};
+
+function getSelectedLevel() {
+  const n = Number(levelSelectEl?.value);
+  if (n >= 1 && n <= 5) return n;
+  return 5;
+}
+
+function getActiveColorPool() {
+  return LEVEL_COLOR_POOLS[getSelectedLevel()] ?? LEVEL_COLOR_POOLS[5];
+}
+
 /** ~50% faster than the current movement speed. */
 const GRID_SLIDE_MS_PER_PX = (3.5 / 1.2) / 1.5;
 const GRID_SLIDE_MIN_MS = (180 / 1.2) / 1.5;
-const BOARD_PADDING = { top: 0.09, right: 0.06, bottom: 0.04, left: 0.06 };
+const BOARD_PADDING = { top: 0.16, right: 0.18, bottom: 0.14, left: 0.18 };
 
 const DIRS = {
   up: { x: 0, y: -1, angle: 0 },
@@ -53,10 +70,21 @@ const CAT_COLORS = {
   brown: "#A2845E",
   purple: "#a855f7",
 };
+const EXIT_SIDE_BY_DIR = {
+  up: "top",
+  down: "bottom",
+  left: "left",
+  right: "right",
+};
+const HOUSE_ORDER = ["top", "bottom", "left", "right"];
+const WAITLIST_MAX = 5;
+const HOUSE_REQUIREMENT_SIZE = 2;
 
 const state = {
   cats: [],
-  house: { total: 0, filled: 0 },
+  houses: {},
+  waitlist: [],
+  gameOver: false,
   movingCats: new Set(),
 };
 
@@ -66,6 +94,7 @@ const roadLayerEl = document.getElementById("road-layer");
 const runnerLayerEl = document.getElementById("runner-layer");
 const statusEl = document.getElementById("status");
 const regenBtn = document.getElementById("regen-btn");
+const levelSelectEl = document.getElementById("level-select");
 
 const random = (n) => Math.floor(Math.random() * n);
 const choose = (arr) => arr[random(arr.length)];
@@ -208,38 +237,38 @@ function hasDirectionalOrderingConflict(cats) {
   // - No left-facing cat can be to the right of any right-facing cat in the same row.
   // Column rule:
   // - No up-facing cat can be below any down-facing cat in the same column.
-  const rowMinLeftX = new Map();
-  const rowMaxRightX = new Map();
-  const colMinUpY = new Map();
-  const colMaxDownY = new Map();
+  const rowMaxLeftX = new Map();
+  const rowMinRightX = new Map();
+  const colMaxUpY = new Map();
+  const colMinDownY = new Map();
 
   for (const cat of cats) {
     const cells = occupiedCells(cat);
     for (const cell of cells) {
       if (cat.dir === "left") {
-        const prev = rowMinLeftX.get(cell.y);
-        rowMinLeftX.set(cell.y, prev === undefined ? cell.x : Math.min(prev, cell.x));
+        const prev = rowMaxLeftX.get(cell.y);
+        rowMaxLeftX.set(cell.y, prev === undefined ? cell.x : Math.max(prev, cell.x));
       } else if (cat.dir === "right") {
-        const prev = rowMaxRightX.get(cell.y);
-        rowMaxRightX.set(cell.y, prev === undefined ? cell.x : Math.max(prev, cell.x));
+        const prev = rowMinRightX.get(cell.y);
+        rowMinRightX.set(cell.y, prev === undefined ? cell.x : Math.min(prev, cell.x));
       } else if (cat.dir === "up") {
-        const prev = colMinUpY.get(cell.x);
-        colMinUpY.set(cell.x, prev === undefined ? cell.y : Math.min(prev, cell.y));
+        const prev = colMaxUpY.get(cell.x);
+        colMaxUpY.set(cell.x, prev === undefined ? cell.y : Math.max(prev, cell.y));
       } else if (cat.dir === "down") {
-        const prev = colMaxDownY.get(cell.x);
-        colMaxDownY.set(cell.x, prev === undefined ? cell.y : Math.max(prev, cell.y));
+        const prev = colMinDownY.get(cell.x);
+        colMinDownY.set(cell.x, prev === undefined ? cell.y : Math.min(prev, cell.y));
       }
     }
   }
 
-  for (const [row, maxRight] of rowMaxRightX.entries()) {
-    const minLeft = rowMinLeftX.get(row);
-    if (minLeft !== undefined && minLeft > maxRight) return true;
+  for (const [row, maxLeft] of rowMaxLeftX.entries()) {
+    const minRight = rowMinRightX.get(row);
+    if (minRight !== undefined && maxLeft > minRight) return true;
   }
 
-  for (const [col, maxDown] of colMaxDownY.entries()) {
-    const minUp = colMinUpY.get(col);
-    if (minUp !== undefined && minUp > maxDown) return true;
+  for (const [col, maxUp] of colMaxUpY.entries()) {
+    const minDown = colMinDownY.get(col);
+    if (minDown !== undefined && maxUp > minDown) return true;
   }
 
   return false;
@@ -291,9 +320,10 @@ function hasGreenInboundConflict(cats) {
   return false;
 }
 
-function hasGreenPurpleAlignmentQuotaConflict(cats) {
+function hasGreenPurpleAlignmentQuotaConflict(cats, purpleInPool) {
   const greens = cats.filter((c) => c.color === "green");
   if (greens.length === 0) return false;
+  if (!purpleInPool) return false;
   const purples = cats.filter((c) => c.color === "purple");
   if (purples.length === 0) return true;
 
@@ -405,6 +435,9 @@ function brownRotateOnBump(cat) {
 }
 
 function generatePuzzle() {
+  const colorPool = getActiveColorPool();
+  const poolHasPurple = colorPool.includes("purple");
+
   for (let attempt = 0; attempt < 1200; attempt++) {
     const cats = [];
     const target = CONFIG.minCats + random(CONFIG.maxCats - CONFIG.minCats + 1);
@@ -412,7 +445,7 @@ function generatePuzzle() {
     let failures = 0;
 
     while (cats.length < target && failures < 12000) {
-      const color = choose(CONFIG.colorPool);
+      const color = choose(colorPool);
       let candidate;
 
       if (color === "purple") {
@@ -477,7 +510,7 @@ function generatePuzzle() {
     if (cats.length < CONFIG.minCats) continue;
     if (!anyEscapable(cats)) continue;
 
-    if (!cats.some((c) => c.color === "purple")) {
+    if (poolHasPurple && !cats.some((c) => c.color === "purple")) {
       let placed = false;
       for (let t = 0; t < 400 && !placed; t++) {
         const extra = {
@@ -504,28 +537,171 @@ function generatePuzzle() {
       }
     }
 
-    if (!cats.some((c) => c.color === "purple")) continue;
-    if (hasGreenPurpleAlignmentQuotaConflict(cats)) continue;
+    if (poolHasPurple && !cats.some((c) => c.color === "purple")) continue;
+    if (hasGreenPurpleAlignmentQuotaConflict(cats, poolHasPurple)) continue;
 
     return cats;
   }
   throw new Error("Could not generate puzzle.");
 }
 
+function requirementPoolForSide(side, cats) {
+  const dirBySide = { top: "up", bottom: "down", left: "left", right: "right" };
+  const dir = dirBySide[side];
+
+  // Primary pool: colors from cats that can currently escape to this exact side.
+  const escapablePool = cats
+    .filter((c) => c.dir === dir && computeStopFor(c, cats).escaped)
+    .map((c) => c.color);
+  if (escapablePool.length) return escapablePool;
+
+  // Secondary pool: keep direction-only behavior as a soft fallback.
+  const directionalPool = cats.filter((c) => c.dir === dir).map((c) => c.color);
+  if (directionalPool.length) return directionalPool;
+
+  // Final fallback: use any color still present on board.
+  return cats.map((c) => c.color);
+}
+
+function generateRequirement(side, cats) {
+  const pool = requirementPoolForSide(side, cats);
+  if (!pool.length) return ["red", "blue"];
+  const req = [];
+  for (let i = 0; i < HOUSE_REQUIREMENT_SIZE; i++) req.push(choose(pool));
+  return req;
+}
+
 function initHouses(cats) {
-  state.house = { total: cats.length, filled: 0 };
+  state.gameOver = false;
+  state.waitlist = [];
+  state.houses = {};
+  for (const side of HOUSE_ORDER) {
+    state.houses[side] = {
+      requirement: generateRequirement(side, cats),
+      accepted: [],
+    };
+  }
+}
+
+function consumeHouseRequirement(side, color) {
+  return consumeHouseRequirementWithOptions(side, color, { allowWaitlistAutoFill: true });
+}
+
+function consumeHouseRequirementWithOptions(side, color, options = {}) {
+  const { allowWaitlistAutoFill = true } = options;
+  const house = state.houses[side];
+  if (!house) return false;
+  const req = house.requirement;
+  const accepted = house.accepted;
+  const needed = {};
+  const got = {};
+  for (const c of req) needed[c] = (needed[c] || 0) + 1;
+  for (const c of accepted) got[c] = (got[c] || 0) + 1;
+  if ((got[color] || 0) >= (needed[color] || 0)) return false;
+  accepted.push(color);
+  if (accepted.length >= HOUSE_REQUIREMENT_SIZE) {
+    house.requirement = generateRequirement(side, state.cats);
+    house.accepted = [];
+    if (allowWaitlistAutoFill) {
+      settleWaitlistToHouses();
+    }
+  }
+  return true;
+}
+
+function settleWaitlistToHouses() {
+  let progressed = false;
+  let movedAny;
+  do {
+    movedAny = false;
+    for (let i = 0; i < state.waitlist.length; i++) {
+      const color = state.waitlist[i];
+      let moved = false;
+      for (const side of HOUSE_ORDER) {
+        if (consumeHouseRequirementWithOptions(side, color, { allowWaitlistAutoFill: false })) {
+          state.waitlist.splice(i, 1);
+          i -= 1;
+          moved = true;
+          movedAny = true;
+          progressed = true;
+          break;
+        }
+      }
+      if (moved) continue;
+    }
+  } while (movedAny);
+  return progressed;
 }
 
 function renderHouses() {
   housesEl.innerHTML = "";
-  const left = Math.max(state.house.total - state.house.filled, 0);
-  const node = document.createElement("div");
-  node.className = "house home";
-  node.innerHTML = `
-    <div class="house-name">Cat house</div>
-    <div class="house-count">${left} cats left</div>
-  `;
-  housesEl.appendChild(node);
+  const boardRect = boardEl.getBoundingClientRect();
+  const playRect = housesEl.getBoundingClientRect();
+  const boardLeft = boardRect.left - playRect.left;
+  const boardRight = boardRect.right - playRect.left;
+  const boardTop = boardRect.top - playRect.top;
+  const boardBottom = boardRect.bottom - playRect.top;
+  const sideGap = 10;
+  const waitNode = document.createElement("div");
+  waitNode.className = "waitlist";
+  waitNode.innerHTML = `<div class="wait-title">Waitlist (${state.waitlist.length}/${WAITLIST_MAX})</div>`;
+  const waitPills = document.createElement("div");
+  waitPills.className = "wait-pills";
+  for (let i = 0; i < WAITLIST_MAX; i++) {
+    const slot = document.createElement("span");
+    if (state.waitlist[i]) {
+      slot.className = "wait-slot filled";
+      slot.style.background = CAT_COLORS[state.waitlist[i]] || "#fff";
+    } else {
+      slot.className = "wait-slot";
+    }
+    waitPills.appendChild(slot);
+  }
+  waitNode.appendChild(waitPills);
+  housesEl.appendChild(waitNode);
+
+  for (const side of HOUSE_ORDER) {
+    const house = state.houses[side];
+    if (!house) continue;
+    const flowLabel = {
+      top: "flow: right -> left",
+      bottom: "flow: left -> right",
+      left: "flow: top -> bottom",
+      right: "flow: bottom -> right",
+    }[side];
+    const node = document.createElement("div");
+    node.className = `house side-${side}`;
+    node.innerHTML = `<div class="house-name">${side} house</div><div class="house-count">needs 2 cats | ${flowLabel}</div>`;
+    if (side === "top") {
+      node.style.left = `${(boardLeft + boardRight) / 2}px`;
+      node.style.top = `${Math.max(2, boardTop - sideGap)}px`;
+      node.style.transform = "translate(-50%, -100%)";
+    } else if (side === "bottom") {
+      node.style.left = `${(boardLeft + boardRight) / 2}px`;
+      node.style.top = `${Math.min(playRect.height - 2, boardBottom + sideGap)}px`;
+      node.style.transform = "translate(-50%, 0)";
+    } else if (side === "left") {
+      node.style.left = `${Math.max(2, boardLeft - sideGap)}px`;
+      node.style.top = `${(boardTop + boardBottom) / 2}px`;
+      node.style.transform = "translate(-100%, -50%)";
+    } else if (side === "right") {
+      node.style.left = `${Math.min(playRect.width - 2, boardRight + sideGap)}px`;
+      node.style.top = `${(boardTop + boardBottom) / 2}px`;
+      node.style.transform = "translate(0, -50%)";
+    }
+    const pills = document.createElement("div");
+    pills.className = "req-pills";
+    for (let i = 0; i < HOUSE_REQUIREMENT_SIZE; i++) {
+      const color = house.requirement[i];
+      const pill = document.createElement("span");
+      pill.className = "req-pill";
+      pill.style.background = CAT_COLORS[color] || "#fff";
+      if (i < house.accepted.length) pill.classList.add("dimmed");
+      pills.appendChild(pill);
+    }
+    node.appendChild(pills);
+    housesEl.appendChild(node);
+  }
 }
 
 function drawGridLines() {
@@ -650,7 +826,11 @@ function renderCats() {
 
 function renderRoad() {
   const boardRect = boardEl.getBoundingClientRect();
-  const playRect = roadLayerEl.getBoundingClientRect();
+  /** Use playfield (board parent), not the SVG node: inline SVG can under-report height so clampY pulls roads into the grid. */
+  const playRect = boardEl.parentElement.getBoundingClientRect();
+  const edgePad = 6;
+  const clampX = (v) => Math.max(edgePad, Math.min(playRect.width - edgePad, v));
+  const clampY = (v) => Math.max(edgePad, Math.min(playRect.height - edgePad, v));
   const toPctX = (x) => (x / playRect.width) * 100;
   const toPctY = (y) => (y / playRect.height) * 100;
 
@@ -659,24 +839,28 @@ function renderRoad() {
   const top = boardRect.top - playRect.top;
   const bottom = boardRect.bottom - playRect.top;
   const margin = 18;
-  const roadTop = top - margin;
-  const roadBottom = bottom + margin;
-  const roadLeft = left - margin;
-  const roadRight = right + margin;
+  const cellW = (right - left) / CONFIG.cols;
+  const cellH = (bottom - top) / CONFIG.rows;
+  /** Extend past board width (10 cols) / height (15 rows) so roads sit outside the grid, not as one closed frame. */
+  const hOverhang = cellW * 0.42;
+  const vOverhang = cellH * 0.42;
 
-  const houseNodes = [...housesEl.querySelectorAll(".house")];
-  const houseMids = houseNodes.map((node) => {
-    const rect = node.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2 - playRect.left, y: rect.bottom - playRect.top };
-  });
+  const roadTopY = clampY(top - margin);
+  const roadBottomY = clampY(bottom + margin);
+  const roadLeftX = clampX(left - margin);
+  const roadRightX = clampX(right + margin);
+  const topBottomX0 = clampX(left - margin - hOverhang);
+  const topBottomX1 = clampX(right + margin + hOverhang);
+  const leftRightY0 = clampY(top - margin - vOverhang);
+  const leftRightY1 = clampY(bottom + margin + vOverhang);
 
-  let paths = "";
-  paths += `M ${toPctX(roadLeft)} ${toPctY(roadTop)} L ${toPctX(roadRight)} ${toPctY(roadTop)} `;
-  paths += `L ${toPctX(roadRight)} ${toPctY(roadBottom)} L ${toPctX(roadLeft)} ${toPctY(roadBottom)} Z `;
-  for (const mid of houseMids) {
-    paths += `M ${toPctX(mid.x)} ${toPctY(mid.y)} L ${toPctX(mid.x)} ${toPctY(roadTop)} `;
-  }
-  roadLayerEl.innerHTML = `<path class="road-stroke" d="${paths}" />`;
+  const segments = [
+    `M ${toPctX(topBottomX0)} ${toPctY(roadTopY)} L ${toPctX(topBottomX1)} ${toPctY(roadTopY)}`,
+    `M ${toPctX(topBottomX0)} ${toPctY(roadBottomY)} L ${toPctX(topBottomX1)} ${toPctY(roadBottomY)}`,
+    `M ${toPctX(roadLeftX)} ${toPctY(leftRightY0)} L ${toPctX(roadLeftX)} ${toPctY(leftRightY1)}`,
+    `M ${toPctX(roadRightX)} ${toPctY(leftRightY0)} L ${toPctX(roadRightX)} ${toPctY(leftRightY1)}`,
+  ];
+  roadLayerEl.innerHTML = `<path class="road-stroke" d="${segments.join(" ")}" />`;
 }
 
 function syncView() {
@@ -1026,7 +1210,7 @@ async function playMotionSegments(catId, segments) {
 
 function gridCellCenter(cell) {
   const boardRect = boardEl.getBoundingClientRect();
-  const playRect = runnerLayerEl.getBoundingClientRect();
+  const playRect = boardEl.parentElement.getBoundingClientRect();
   const { w, h } = cellSize();
   return {
     x: boardRect.left - playRect.left + (cell.x + 0.5) * w,
@@ -1036,7 +1220,7 @@ function gridCellCenter(cell) {
 
 function roadBox() {
   const boardRect = boardEl.getBoundingClientRect();
-  const playRect = runnerLayerEl.getBoundingClientRect();
+  const playRect = boardEl.parentElement.getBoundingClientRect();
   const margin = 18;
   return {
     left: boardRect.left - playRect.left - margin,
@@ -1046,33 +1230,38 @@ function roadBox() {
   };
 }
 
-function houseCenter() {
-  const node = housesEl.querySelector(".house.home");
+function houseCenter(side) {
+  const node = housesEl.querySelector(`.house.side-${side}`);
   if (!node) {
     return { x: 0, y: 0 };
   }
   const rect = node.getBoundingClientRect();
-  const playRect = runnerLayerEl.getBoundingClientRect();
+  const playRect = boardEl.parentElement.getBoundingClientRect();
   return {
     x: rect.left - playRect.left + rect.width / 2,
     y: rect.top - playRect.top + rect.height / 2,
   };
 }
 
-function pathToHouse(exitCell, dirKey) {
-  const dir = DIRS[dirKey];
+function pathToHouse(exitCell, side) {
   const start = gridCellCenter(exitCell);
   const box = roadBox();
-  const target = houseCenter();
+  const target = houseCenter(side);
   const points = [start];
 
-  const edge = {
-    x: dir.x === -1 ? box.left : dir.x === 1 ? box.right : start.x,
-    y: dir.y === -1 ? box.top : dir.y === 1 ? box.bottom : start.y,
+  const edgeBySide = {
+    left: { x: box.left, y: start.y },
+    right: { x: box.right, y: start.y },
+    top: { x: start.x, y: box.top },
+    bottom: { x: start.x, y: box.bottom },
   };
+  const edge = edgeBySide[side] || start;
   points.push(edge);
-  points.push({ x: edge.x, y: box.top });
-  points.push({ x: target.x, y: box.top });
+  if (side === "top" || side === "bottom") {
+    points.push({ x: target.x, y: edge.y });
+  } else {
+    points.push({ x: edge.x, y: target.y });
+  }
   points.push(target);
   return points;
 }
@@ -1129,6 +1318,19 @@ function animateRunner(color, points) {
   });
 }
 
+function handleCatExit(cat) {
+  const side = EXIT_SIDE_BY_DIR[cat.dir];
+  if (!side) return { outcome: "unknown", side };
+  const accepted = consumeHouseRequirement(side, cat.color);
+  if (accepted) return { outcome: "accepted", side };
+  if (state.waitlist.length >= WAITLIST_MAX) {
+    state.gameOver = true;
+    return { outcome: "overflow", side };
+  }
+  state.waitlist.push(cat.color);
+  return { outcome: "waitlist", side };
+}
+
 function wakeGreenIfSleeping(cat) {
   if (!cat || cat.color !== "green" || !cat.sleeping) return false;
   cat.sleeping = false;
@@ -1139,6 +1341,7 @@ async function moveCat(catId) {
   if (state.movingCats.has(catId)) return;
   const cat = state.cats.find((c) => c.id === catId);
   if (!cat) return;
+  if (state.gameOver) return;
   if (cat.color === "green" && cat.sleeping) {
     statusEl.textContent = "Sleeping green cats wake only when bumped.";
     return;
@@ -1162,18 +1365,24 @@ async function moveCat(catId) {
     cat.color === "yellow" && Array.isArray(stop.segments) && stop.segments.some((seg) => seg.kind === "jump");
   if (stop.escaped) {
     await playMotionSegments(cat.id, stop.segments);
-    const path = pathToHouse(stop.exitHead, cat.dir);
+    const side = EXIT_SIDE_BY_DIR[cat.dir];
+    const path = pathToHouse(stop.exitHead, side);
     state.cats = state.cats.filter((c) => c.id !== cat.id);
     syncView();
     state.movingCats.delete(catId);
     animateRunner(cat.color, path).then(() => {
-      state.house.filled += 1;
+      const result = handleCatExit(cat);
       renderHouses();
       const remaining = state.cats.length;
-      statusEl.textContent =
-        remaining === 0
-          ? "All cats are home. Puzzle complete!"
-          : `${cat.color} cat reached its house.`;
+      if (result.outcome === "overflow") {
+        statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+      } else if (remaining === 0) {
+        statusEl.textContent = "All cats exited. You win!";
+      } else if (result.outcome === "accepted") {
+        statusEl.textContent = `${cat.color} cat entered ${side} house.`;
+      } else {
+        statusEl.textContent = `${cat.color} cat sent to waitlist.`;
+      }
     });
   } else {
     await playMotionSegments(cat.id, stop.segments);
@@ -1199,18 +1408,24 @@ async function moveCat(catId) {
         const reverseStop = computeStopFor(cat, state.cats);
         await playMotionSegments(cat.id, reverseStop.segments);
         if (reverseStop.escaped) {
-          const path = pathToHouse(reverseStop.exitHead, cat.dir);
+          const side = EXIT_SIDE_BY_DIR[cat.dir];
+          const path = pathToHouse(reverseStop.exitHead, side);
           state.cats = state.cats.filter((c) => c.id !== cat.id);
           syncView();
           state.movingCats.delete(catId);
           animateRunner(cat.color, path).then(() => {
-            state.house.filled += 1;
+            const result = handleCatExit(cat);
             renderHouses();
             const remaining = state.cats.length;
-            statusEl.textContent =
-              remaining === 0
-                ? "All cats are home. Puzzle complete!"
-                : "blue cat reversed and reached its house.";
+            if (result.outcome === "overflow") {
+              statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+            } else if (remaining === 0) {
+              statusEl.textContent = "All cats exited. You win!";
+            } else if (result.outcome === "accepted") {
+              statusEl.textContent = `blue cat entered ${side} house.`;
+            } else {
+              statusEl.textContent = "blue cat routed to waitlist.";
+            }
           });
           return;
         }
@@ -1243,7 +1458,7 @@ async function moveCat(catId) {
   if (!stop.escaped) {
     const remaining = state.cats.length;
     if (remaining === 0) {
-      statusEl.textContent = "All cats are home. Puzzle complete!";
+      statusEl.textContent = "All cats exited. You win!";
     }
   }
 }
@@ -1251,11 +1466,12 @@ async function moveCat(catId) {
 function newPuzzle() {
   state.cats = generatePuzzle();
   initHouses(state.cats);
-  statusEl.textContent = "Tap a cat to move.";
+  statusEl.textContent = "Send cats to their matching road houses.";
   syncView();
 }
 
 regenBtn.addEventListener("click", newPuzzle);
+levelSelectEl.addEventListener("change", newPuzzle);
 window.addEventListener("resize", syncView);
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", syncView);
