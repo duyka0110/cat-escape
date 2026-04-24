@@ -121,6 +121,8 @@ const state = {
   boxCatsWaitlist: [],
   /** "won" | "lost" | null — Treats mode end state */
   treatsOutcome: null,
+  /** Shared end modal state: { outcome: "won"|"lost", message: string } | null */
+  endState: null,
   gameOver: false,
   movingCats: new Set(),
 };
@@ -643,6 +645,7 @@ function generateRequirement(side, cats) {
 
 function initHouses(cats) {
   state.gameOver = false;
+  state.endState = null;
   state.waitlist = [];
   state.treats = [];
   state.treatTrays = [];
@@ -726,6 +729,7 @@ function generateTreats(cats) {
 
 function initTreats(cats) {
   state.gameOver = false;
+  state.endState = null;
   state.waitlist = [];
   state.houses = {};
   state.boxCatsBoxes = [];
@@ -935,6 +939,10 @@ function evaluateBoxCatsEndState() {
   if (!isAnyBoxCatsMode()) return null;
   if (state.cats.length === 0) {
     state.gameOver = true;
+    state.endState = {
+      outcome: "won",
+      message: "All cats exited the board. You win!",
+    };
     return { outcome: "won" };
   }
 
@@ -949,11 +957,16 @@ function evaluateBoxCatsEndState() {
   if (hasAnyColorOverlap(need, exitableSupply)) return null;
 
   state.gameOver = true;
+  state.endState = {
+    outcome: "lost",
+    message: "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.",
+  };
   return { outcome: "lost", reason: "deadlock-full-waitlist" };
 }
 
 function initBoxCats(cats) {
   state.gameOver = false;
+  state.endState = null;
   state.waitlist = [];
   state.houses = {};
   state.treats = [];
@@ -1040,6 +1053,10 @@ function maybeTreatsWinAfterMove() {
   if (ok) {
     state.gameOver = true;
     state.treatsOutcome = "won";
+    state.endState = {
+      outcome: "won",
+      message: "All treats collected and delivered. You win!",
+    };
   }
 }
 
@@ -1060,6 +1077,10 @@ function tryCollectTreat(cat, side, exitCell) {
   if (state.treatWaitlist.length >= TREAT_WAITLIST_MAX) {
     state.gameOver = true;
     state.treatsOutcome = "lost";
+    state.endState = {
+      outcome: "lost",
+      message: "Treat waitlist is full. You lose.",
+    };
     return { outcome: "waitlist-full", color: treat.color };
   }
   state.treatWaitlist.push(treat.color);
@@ -1122,10 +1143,12 @@ function renderHouses() {
   housesEl.innerHTML = "";
   if (getRequirementMode() === "treats") {
     renderTreatsOverlay();
+    updateTreatsEndModal();
     return;
   }
   if (isAnyBoxCatsMode()) {
     renderBoxCatsOverlay();
+    updateTreatsEndModal();
     return;
   }
   const boardRect = boardEl.getBoundingClientRect();
@@ -1195,6 +1218,7 @@ function renderHouses() {
     node.appendChild(pills);
     housesEl.appendChild(node);
   }
+  updateTreatsEndModal();
 }
 
 function renderBoxCatsOverlay() {
@@ -1364,20 +1388,16 @@ function renderTreatsOverlay() {
 }
 
 function updateTreatsEndModal() {
-  if (!treatsModalEl || getRequirementMode() !== "treats") {
-    if (treatsModalEl) treatsModalEl.hidden = true;
-    return;
-  }
-  if (!state.treatsOutcome) {
+  if (!treatsModalEl) return;
+  if (!state.endState) {
     treatsModalEl.hidden = true;
     return;
   }
   treatsModalEl.hidden = false;
-  if (state.treatsOutcome === "won") {
-    treatsModalMsgEl.textContent = "All treats collected and delivered. You win!";
-    treatsModalBtnEl.textContent = "Play again";
+  treatsModalMsgEl.textContent = state.endState.message;
+  if (state.endState.outcome === "won") {
+    treatsModalBtnEl.textContent = "New Game";
   } else {
-    treatsModalMsgEl.textContent = "Treat waitlist is full. You lose.";
     treatsModalBtnEl.textContent = "Retry";
   }
 }
@@ -1851,6 +1871,7 @@ function syncView() {
   renderHouses();
   renderRoad();
   renderCats();
+  updateTreatsEndModal();
 }
 
 function pushSlideSegment(segments, fromTail, toTail) {
@@ -2341,6 +2362,10 @@ function handleCatExit(cat, exitCell) {
   if (accepted) return { outcome: "accepted", side };
   if (state.waitlist.length >= WAITLIST_MAX) {
     state.gameOver = true;
+    state.endState = {
+      outcome: "lost",
+      message: "Waitlist full. One more wrong cat escaped. You lose.",
+    };
     return { outcome: "overflow", side };
   }
   state.waitlist.push(cat.color);
@@ -2497,6 +2522,11 @@ async function moveCat(catId) {
         if (result.outcome === "overflow") {
           statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
         } else if (remaining === 0) {
+                state.gameOver = true;
+                state.endState = {
+                  outcome: "won",
+                  message: "All cats exited. You win!",
+                };
           statusEl.textContent = "All cats exited. You win!";
         } else if (result.outcome === "accepted") {
           statusEl.textContent = `${cat.color} cat entered ${side} house.`;
@@ -2584,6 +2614,11 @@ async function moveCat(catId) {
               if (result.outcome === "overflow") {
                 statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
               } else if (remaining === 0) {
+                state.gameOver = true;
+                state.endState = {
+                  outcome: "won",
+                  message: "All cats exited. You win!",
+                };
                 statusEl.textContent = "All cats exited. You win!";
               } else if (result.outcome === "accepted") {
                 statusEl.textContent = `blue cat entered ${side} house.`;
@@ -2623,6 +2658,11 @@ async function moveCat(catId) {
   if (!stop.escaped) {
     const remaining = state.cats.length;
     if (remaining === 0) {
+      state.gameOver = true;
+      state.endState = {
+        outcome: "won",
+        message: "All cats exited. You win!",
+      };
       statusEl.textContent = "All cats exited. You win!";
     }
   }

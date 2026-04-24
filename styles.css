@@ -663,41 +663,41 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.65rem;
   z-index: 3;
 }
 
 .boxcats-strip {
   display: flex;
-  gap: 0.42rem;
+  gap: 0.5rem;
 }
 
 .boxcat-box {
-  min-width: 4.3rem;
+  min-width: 5.1rem;
   background: rgb(10 12 18 / 86%);
   border: 1px solid rgb(255 255 255 / 16%);
-  border-radius: 12px;
-  padding: 0.34rem 0.4rem;
+  border-radius: 14px;
+  padding: 0.46rem 0.52rem;
   text-align: center;
   transform: translateY(0);
 }
 
 .boxcat-box-label {
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 800;
   opacity: 0.9;
-  margin-bottom: 0.18rem;
+  margin-bottom: 0.24rem;
 }
 
 .boxcat-pill-row {
   display: flex;
   justify-content: center;
-  gap: 0.24rem;
+  gap: 0.3rem;
 }
 
 .boxcat-pill {
-  width: 0.78rem;
-  height: 0.78rem;
+  width: 0.92rem;
+  height: 0.92rem;
   border-radius: 999px;
   border: 2px solid rgb(255 255 255 / 45%);
   background: transparent;
@@ -724,30 +724,30 @@ body {
 
 .boxcat-waitlist-row {
   text-align: center;
-  min-width: min(92vw, 18.5rem);
-  padding: 0.4rem 0.62rem 0.45rem;
+  min-width: min(94vw, 20.5rem);
+  padding: 0.5rem 0.75rem 0.55rem;
   background: rgb(10 12 18 / 72%);
   border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 12px;
+  border-radius: 14px;
 }
 
 .boxcat-waitlist-title {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 700;
   opacity: 0.9;
-  margin-bottom: 0.26rem;
+  margin-bottom: 0.32rem;
   letter-spacing: 0.02em;
 }
 
 .boxcat-wait-pills {
   display: flex;
   justify-content: center;
-  gap: 0.34rem;
+  gap: 0.4rem;
 }
 
 .boxcat-wait-slot {
-  width: 1.02rem;
-  height: 1.02rem;
+  width: 1.16rem;
+  height: 1.16rem;
   border-radius: 999px;
   border: 2px solid rgb(255 255 255 / 28%);
   background: rgb(255 255 255 / 6%);
