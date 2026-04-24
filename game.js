@@ -119,6 +119,7 @@ const state = {
   treatWaitlist: [],
   boxCatsBoxes: [],
   boxCatsWaitlist: [],
+  boxCatsOneColorRecent: [],
   /** "won" | "lost" | null — Treats mode end state */
   treatsOutcome: null,
   /** Shared end modal state: { outcome: "won"|"lost", message: string } | null */
@@ -126,6 +127,15 @@ const state = {
   gameOver: false,
   movingCats: new Set(),
 };
+
+/** Box exit resolution mutates shared box/waitlist state; serialize only that part. */
+let boxExitChain = Promise.resolve();
+
+function enqueueBoxCatsExit(fn) {
+  const run = boxExitChain.then(() => fn());
+  boxExitChain = run.catch(() => {});
+  return run;
+}
 
 const housesEl = document.getElementById("houses");
 const boardEl = document.getElementById("grid-board");
@@ -790,6 +800,14 @@ function emptyBoxRequirement() {
   return { color: null, requirement: 0, requirementColors: [], accepted: [] };
 }
 
+function rememberOneColorBoxColor(color) {
+  if (!color) return;
+  state.boxCatsOneColorRecent.push(color);
+  if (state.boxCatsOneColorRecent.length > 2) {
+    state.boxCatsOneColorRecent = state.boxCatsOneColorRecent.slice(-2);
+  }
+}
+
 function boxRequirementPool(excludeIndex = -1) {
   const boardCounts = boardColorCounts();
   const waitCountsMap = colorCountsFromList(state.boxCatsWaitlist);
@@ -829,12 +847,22 @@ function generateBoxCatsRequirementOneColor(excludeIndex = -1) {
   const fallbackPool = sourcePool.filter((p) => p.remaining >= 1);
   const source = strictPool.length ? strictPool : fallbackPool;
   if (!source.length) return null;
-  const pick = choose(source);
+  let pickPool = source;
+  const recent = state.boxCatsOneColorRecent;
+  if (recent.length >= 2 && recent[recent.length - 1] === recent[recent.length - 2]) {
+    const blockedColor = recent[recent.length - 1];
+    const filtered = source.filter((p) => p.color !== blockedColor);
+    if (filtered.length) {
+      pickPool = filtered;
+    }
+  }
+  const pick = choose(pickPool);
   const maxN = Math.min(BOX_CATS_MAX_REQUIREMENT, pick.remaining);
   const minN = strictPool.length ? BOX_CATS_MIN_REQUIREMENT : 1;
   if (maxN < minN) return null;
   const span = maxN - minN + 1;
   const requirement = minN + random(span);
+  rememberOneColorBoxColor(pick.color);
   return {
     color: pick.color,
     requirement,
@@ -943,6 +971,7 @@ function evaluateBoxCatsEndState() {
       outcome: "won",
       message: "All cats exited the board. You win!",
     };
+    updateTreatsEndModal();
     return { outcome: "won" };
   }
 
@@ -961,6 +990,7 @@ function evaluateBoxCatsEndState() {
     outcome: "lost",
     message: "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.",
   };
+  updateTreatsEndModal();
   return { outcome: "lost", reason: "deadlock-full-waitlist" };
 }
 
@@ -974,6 +1004,7 @@ function initBoxCats(cats) {
   state.treatWaitlist = [];
   state.treatsOutcome = null;
   state.boxCatsWaitlist = [];
+  state.boxCatsOneColorRecent = [];
   state.boxCatsBoxes = [];
   const generator = isBoxCatsMultiColorMode()
     ? generateBoxCatsRequirementMultiColor
@@ -1057,6 +1088,7 @@ function maybeTreatsWinAfterMove() {
       outcome: "won",
       message: "All treats collected and delivered. You win!",
     };
+    updateTreatsEndModal();
   }
 }
 
@@ -1081,6 +1113,7 @@ function tryCollectTreat(cat, side, exitCell) {
       outcome: "lost",
       message: "Treat waitlist is full. You lose.",
     };
+    updateTreatsEndModal();
     return { outcome: "waitlist-full", color: treat.color };
   }
   state.treatWaitlist.push(treat.color);
@@ -2366,6 +2399,7 @@ function handleCatExit(cat, exitCell) {
       outcome: "lost",
       message: "Waitlist full. One more wrong cat escaped. You lose.",
     };
+    updateTreatsEndModal();
     return { outcome: "overflow", side };
   }
   state.waitlist.push(cat.color);
@@ -2440,10 +2474,10 @@ function wakeGreenIfSleeping(cat) {
 }
 
 async function moveCat(catId) {
-  if (state.movingCats.has(catId)) return;
+  if (state.gameOver) return;
   const cat = state.cats.find((c) => c.id === catId);
   if (!cat) return;
-  if (state.gameOver) return;
+  if (state.movingCats.has(catId)) return;
   if (!isAnyBoxCatsMode() && cat.color === "green" && cat.sleeping) {
     statusEl.textContent = "Sleeping green cats wake only when bumped.";
     return;
@@ -2451,224 +2485,230 @@ async function moveCat(catId) {
   state.movingCats.add(catId);
   let wokeGreen = false;
   let reversedBlue = false;
+  let stop = null;
 
-  const applyBumpEffects = (blockedIds) => {
-    for (const bid of blockedIds || []) {
-      const blocker = state.cats.find((c) => c.id === bid);
-      if (!isAnyBoxCatsMode() && wakeGreenIfSleeping(blocker)) wokeGreen = true;
-      if (!isAnyBoxCatsMode() && blocker && blocker.color === "purple") {
-        togglePurpleMode(blocker);
+  try {
+    const applyBumpEffects = (blockedIds) => {
+      for (const bid of blockedIds || []) {
+        const blocker = state.cats.find((c) => c.id === bid);
+        if (!isAnyBoxCatsMode() && wakeGreenIfSleeping(blocker)) wokeGreen = true;
+        if (!isAnyBoxCatsMode() && blocker && blocker.color === "purple") {
+          togglePurpleMode(blocker);
+        }
       }
-    }
-  };
+    };
 
-  let stop = computeStopFor(cat, state.cats);
-  const yellowJumped =
-    cat.color === "yellow" && Array.isArray(stop.segments) && stop.segments.some((seg) => seg.kind === "jump");
-  if (stop.escaped) {
-    await playMotionSegments(cat.id, stop.segments);
-    const side = EXIT_SIDE_BY_DIR[cat.dir];
+    stop = computeStopFor(cat, state.cats);
+    const yellowJumped =
+      cat.color === "yellow" &&
+      Array.isArray(stop.segments) &&
+      stop.segments.some((seg) => seg.kind === "jump");
+    if (stop.escaped) {
+      await playMotionSegments(cat.id, stop.segments);
+      const side = EXIT_SIDE_BY_DIR[cat.dir];
 
-    if (getRequirementMode() === "treats") {
-      const result = await animateTreatModeExit(cat, catId, stop.exitHead, side);
-      state.cats = state.cats.filter((c) => c.id !== cat.id);
-      syncView();
-      state.movingCats.delete(catId);
-      const remaining = state.cats.length;
-      if (state.treatsOutcome === "won") {
-        statusEl.textContent = "You win! All treats delivered.";
-      } else if (state.treatsOutcome === "lost") {
-        statusEl.textContent = "Treat waitlist full. You lose.";
-      } else if (remaining === 0) {
-        statusEl.textContent = "All cats exited.";
-      } else if (result.outcome === "tray-complete") {
-        statusEl.textContent = `Tray ${result.trayIndex + 1} filled. New treats needed.`;
-      } else if (result.outcome === "delivered") {
-        statusEl.textContent = `${result.color} treat dropped on tray ${result.trayIndex + 1}.`;
-      } else if (result.outcome === "waitlist") {
-        statusEl.textContent = `${result.color} treat sent to waitlist.`;
-      } else if (result.outcome === "waitlist-full") {
-        statusEl.textContent = "Waitlist is full.";
-      } else {
-        statusEl.textContent = `${cat.color} cat exited (no matching road treat).`;
-      }
-    } else if (isAnyBoxCatsMode()) {
-      state.cats = state.cats.filter((c) => c.id !== cat.id);
-      syncView();
-      state.movingCats.delete(catId);
-      const result = await handleBoxCatsExit(cat, stop.exitHead);
-      const remaining = state.cats.length;
-      if (result.outcome === "won" || remaining === 0) {
-        statusEl.textContent = "All cats exited the board. You win!";
-      } else if (result.outcome === "lost" || result.outcome === "waitlist-full") {
-        statusEl.textContent =
-          "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.";
-      } else if (result.outcome === "box-complete") {
-        statusEl.textContent = "Box filled and replaced with a new requirement.";
-      } else if (result.outcome === "boxed") {
-        statusEl.textContent = `${cat.color} cat filled a box slot.`;
-      } else {
-        statusEl.textContent = `${cat.color} cat routed to box waitlist.`;
-      }
-    } else {
-      const path = pathToHouse(stop.exitHead, side);
-      state.cats = state.cats.filter((c) => c.id !== cat.id);
-      syncView();
-      state.movingCats.delete(catId);
-      animateRunner(cat.color, path).then(() => {
-        const result = handleCatExit(cat, stop.exitHead);
-        renderHouses();
+      if (getRequirementMode() === "treats") {
+        const result = await animateTreatModeExit(cat, catId, stop.exitHead, side);
+        state.cats = state.cats.filter((c) => c.id !== cat.id);
+        syncView();
         const remaining = state.cats.length;
-        if (result.outcome === "overflow") {
-          statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+        if (state.treatsOutcome === "won") {
+          statusEl.textContent = "You win! All treats delivered.";
+        } else if (state.treatsOutcome === "lost") {
+          statusEl.textContent = "Treat waitlist full. You lose.";
         } else if (remaining === 0) {
-                state.gameOver = true;
-                state.endState = {
-                  outcome: "won",
-                  message: "All cats exited. You win!",
-                };
-          statusEl.textContent = "All cats exited. You win!";
-        } else if (result.outcome === "accepted") {
-          statusEl.textContent = `${cat.color} cat entered ${side} house.`;
+          statusEl.textContent = "All cats exited.";
+        } else if (result.outcome === "tray-complete") {
+          statusEl.textContent = `Tray ${result.trayIndex + 1} filled. New treats needed.`;
+        } else if (result.outcome === "delivered") {
+          statusEl.textContent = `${result.color} treat dropped on tray ${result.trayIndex + 1}.`;
+        } else if (result.outcome === "waitlist") {
+          statusEl.textContent = `${result.color} treat sent to waitlist.`;
+        } else if (result.outcome === "waitlist-full") {
+          statusEl.textContent = "Waitlist is full.";
         } else {
-          statusEl.textContent = `${cat.color} cat sent to waitlist.`;
+          statusEl.textContent = `${cat.color} cat exited (no matching road treat).`;
         }
-      });
-    }
-  } else {
-    await playMotionSegments(cat.id, stop.segments);
-    cat.x = stop.tail.x;
-    cat.y = stop.tail.y;
-    applyBumpEffects(stop.blockedIds);
-    if (!isAnyBoxCatsMode() && cat.color === "brown" && (stop.blockedIds || []).length > 0) {
-      const turn = brownRotateOnBump(cat);
-      if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
-    }
-
-    if (!isAnyBoxCatsMode() && cat.color === "blue" && (stop.blockedIds || []).length > 0 && !reversedBlue) {
-      const reverseDir = OPPOSITE_DIR[cat.dir];
-      if (reverseDir) {
-        // Keep the same occupied cells when flipping direction (head/tail swap),
-        // then attempt the reverse movement from that valid footprint.
-        const len = catLength(cat);
-        const prevDir = DIRS[cat.dir];
-        cat.x += prevDir.x * (len - 1);
-        cat.y += prevDir.y * (len - 1);
-        cat.dir = reverseDir;
-        reversedBlue = true;
-        const reverseStop = computeStopFor(cat, state.cats);
-        await playMotionSegments(cat.id, reverseStop.segments);
-        if (reverseStop.escaped) {
-          const side = EXIT_SIDE_BY_DIR[cat.dir];
-
-          if (getRequirementMode() === "treats") {
-            const result = await animateTreatModeExit(cat, catId, reverseStop.exitHead, side);
-            state.cats = state.cats.filter((c) => c.id !== cat.id);
-            syncView();
-            state.movingCats.delete(catId);
-            const remaining = state.cats.length;
-            if (state.treatsOutcome === "won") {
-              statusEl.textContent = "You win! All treats delivered.";
-            } else if (state.treatsOutcome === "lost") {
-              statusEl.textContent = "Treat waitlist full. You lose.";
-            } else if (remaining === 0) {
-              statusEl.textContent = "All cats exited.";
-            } else if (result.outcome === "tray-complete") {
-              statusEl.textContent = `Tray ${result.trayIndex + 1} filled. New treats needed.`;
-            } else if (result.outcome === "delivered") {
-              statusEl.textContent = `${result.color} treat dropped on tray ${result.trayIndex + 1}.`;
-            } else if (result.outcome === "waitlist") {
-              statusEl.textContent = `${result.color} treat sent to waitlist.`;
-            } else if (result.outcome === "waitlist-full") {
-              statusEl.textContent = "Waitlist is full.";
-            } else {
-              statusEl.textContent = "blue cat exited (no matching road treat).";
-            }
-          } else if (isAnyBoxCatsMode()) {
-            state.cats = state.cats.filter((c) => c.id !== cat.id);
-            syncView();
-            state.movingCats.delete(catId);
-            const result = await handleBoxCatsExit(cat, reverseStop.exitHead);
-            const remaining = state.cats.length;
-            if (result.outcome === "won" || remaining === 0) {
-              statusEl.textContent = "All cats exited the board. You win!";
-            } else if (result.outcome === "lost" || result.outcome === "waitlist-full") {
-              statusEl.textContent =
-                "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.";
-            } else if (result.outcome === "box-complete") {
-              statusEl.textContent = "Box filled and replaced with a new requirement.";
-            } else if (result.outcome === "boxed") {
-              statusEl.textContent = `${cat.color} cat filled a box slot.`;
-            } else {
-              statusEl.textContent = `${cat.color} cat routed to box waitlist.`;
-            }
+      } else if (isAnyBoxCatsMode()) {
+        state.cats = state.cats.filter((c) => c.id !== cat.id);
+        syncView();
+        const result = await enqueueBoxCatsExit(() => handleBoxCatsExit(cat, stop.exitHead));
+        const remaining = state.cats.length;
+        if (result.outcome === "won" || remaining === 0) {
+          statusEl.textContent = "All cats exited the board. You win!";
+        } else if (result.outcome === "lost") {
+          statusEl.textContent =
+            "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.";
+        } else if (result.outcome === "waitlist-full") {
+          statusEl.textContent = "Waitlist is full. Keep filling boxes to free slots.";
+        } else if (result.outcome === "box-complete") {
+          statusEl.textContent = "Box filled and replaced with a new requirement.";
+        } else if (result.outcome === "boxed") {
+          statusEl.textContent = `${cat.color} cat filled a box slot.`;
+        } else {
+          statusEl.textContent = `${cat.color} cat routed to box waitlist.`;
+        }
+      } else {
+        const path = pathToHouse(stop.exitHead, side);
+        state.cats = state.cats.filter((c) => c.id !== cat.id);
+        syncView();
+        animateRunner(cat.color, path).then(() => {
+          const result = handleCatExit(cat, stop.exitHead);
+          renderHouses();
+          const remaining = state.cats.length;
+          if (result.outcome === "overflow") {
+            statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+          } else if (remaining === 0) {
+            state.gameOver = true;
+            state.endState = {
+              outcome: "won",
+              message: "All cats exited. You win!",
+            };
+            statusEl.textContent = "All cats exited. You win!";
+          } else if (result.outcome === "accepted") {
+            statusEl.textContent = `${cat.color} cat entered ${side} house.`;
           } else {
-            const path = pathToHouse(reverseStop.exitHead, side);
-            state.cats = state.cats.filter((c) => c.id !== cat.id);
-            syncView();
-            state.movingCats.delete(catId);
-            animateRunner(cat.color, path).then(() => {
-              const result = handleCatExit(cat, reverseStop.exitHead);
-              renderHouses();
-              const remaining = state.cats.length;
-              if (result.outcome === "overflow") {
-                statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
-              } else if (remaining === 0) {
-                state.gameOver = true;
-                state.endState = {
-                  outcome: "won",
-                  message: "All cats exited. You win!",
-                };
-                statusEl.textContent = "All cats exited. You win!";
-              } else if (result.outcome === "accepted") {
-                statusEl.textContent = `blue cat entered ${side} house.`;
-              } else {
-                statusEl.textContent = "blue cat routed to waitlist.";
-              }
-            });
+            statusEl.textContent = `${cat.color} cat sent to waitlist.`;
           }
-          return;
+        });
+      }
+    } else {
+      await playMotionSegments(cat.id, stop.segments);
+      cat.x = stop.tail.x;
+      cat.y = stop.tail.y;
+      applyBumpEffects(stop.blockedIds);
+      if (!isAnyBoxCatsMode() && cat.color === "brown" && (stop.blockedIds || []).length > 0) {
+        const turn = brownRotateOnBump(cat);
+        if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
+      }
+
+      if (!isAnyBoxCatsMode() && cat.color === "blue" && (stop.blockedIds || []).length > 0 && !reversedBlue) {
+        const reverseDir = OPPOSITE_DIR[cat.dir];
+        if (reverseDir) {
+          const len = catLength(cat);
+          const prevDir = DIRS[cat.dir];
+          cat.x += prevDir.x * (len - 1);
+          cat.y += prevDir.y * (len - 1);
+          cat.dir = reverseDir;
+          reversedBlue = true;
+          const reverseStop = computeStopFor(cat, state.cats);
+          await playMotionSegments(cat.id, reverseStop.segments);
+          if (reverseStop.escaped) {
+            const side = EXIT_SIDE_BY_DIR[cat.dir];
+
+            if (getRequirementMode() === "treats") {
+              const result = await animateTreatModeExit(cat, catId, reverseStop.exitHead, side);
+              state.cats = state.cats.filter((c) => c.id !== cat.id);
+              syncView();
+              const remaining = state.cats.length;
+              if (state.treatsOutcome === "won") {
+                statusEl.textContent = "You win! All treats delivered.";
+              } else if (state.treatsOutcome === "lost") {
+                statusEl.textContent = "Treat waitlist full. You lose.";
+              } else if (remaining === 0) {
+                statusEl.textContent = "All cats exited.";
+              } else if (result.outcome === "tray-complete") {
+                statusEl.textContent = `Tray ${result.trayIndex + 1} filled. New treats needed.`;
+              } else if (result.outcome === "delivered") {
+                statusEl.textContent = `${result.color} treat dropped on tray ${result.trayIndex + 1}.`;
+              } else if (result.outcome === "waitlist") {
+                statusEl.textContent = `${result.color} treat sent to waitlist.`;
+              } else if (result.outcome === "waitlist-full") {
+                statusEl.textContent = "Waitlist is full.";
+              } else {
+                statusEl.textContent = "blue cat exited (no matching road treat).";
+              }
+            } else if (isAnyBoxCatsMode()) {
+              state.cats = state.cats.filter((c) => c.id !== cat.id);
+              syncView();
+              const result = await enqueueBoxCatsExit(() =>
+                handleBoxCatsExit(cat, reverseStop.exitHead)
+              );
+              const remaining = state.cats.length;
+              if (result.outcome === "won" || remaining === 0) {
+                statusEl.textContent = "All cats exited the board. You win!";
+              } else if (result.outcome === "lost") {
+                statusEl.textContent =
+                  "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.";
+              } else if (result.outcome === "waitlist-full") {
+                statusEl.textContent = "Waitlist is full. Keep filling boxes to free slots.";
+              } else if (result.outcome === "box-complete") {
+                statusEl.textContent = "Box filled and replaced with a new requirement.";
+              } else if (result.outcome === "boxed") {
+                statusEl.textContent = `${cat.color} cat filled a box slot.`;
+              } else {
+                statusEl.textContent = `${cat.color} cat routed to box waitlist.`;
+              }
+            } else {
+              const path = pathToHouse(reverseStop.exitHead, side);
+              state.cats = state.cats.filter((c) => c.id !== cat.id);
+              syncView();
+              animateRunner(cat.color, path).then(() => {
+                const result = handleCatExit(cat, reverseStop.exitHead);
+                renderHouses();
+                const remaining = state.cats.length;
+                if (result.outcome === "overflow") {
+                  statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+                } else if (remaining === 0) {
+                  state.gameOver = true;
+                  state.endState = {
+                    outcome: "won",
+                    message: "All cats exited. You win!",
+                  };
+                  statusEl.textContent = "All cats exited. You win!";
+                } else if (result.outcome === "accepted") {
+                  statusEl.textContent = `blue cat entered ${side} house.`;
+                } else {
+                  statusEl.textContent = "blue cat routed to waitlist.";
+                }
+              });
+            }
+            return;
+          }
+          cat.x = reverseStop.tail.x;
+          cat.y = reverseStop.tail.y;
+          applyBumpEffects(reverseStop.blockedIds);
+          if (!isAnyBoxCatsMode() && cat.color === "brown" && (reverseStop.blockedIds || []).length > 0) {
+            const turn = brownRotateOnBump(cat);
+            if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
+          }
+          stop = reverseStop;
         }
-        cat.x = reverseStop.tail.x;
-        cat.y = reverseStop.tail.y;
-        applyBumpEffects(reverseStop.blockedIds);
-        if (!isAnyBoxCatsMode() && cat.color === "brown" && (reverseStop.blockedIds || []).length > 0) {
-          const turn = brownRotateOnBump(cat);
-          if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
-        }
-        stop = reverseStop;
+      }
+
+      renderCats();
+      if (wokeGreen) {
+        statusEl.textContent = reversedBlue
+          ? "A green cat woke up. blue cat reversed and stopped."
+          : `${cat.color} cat moved and woke a green cat.`;
+      } else {
+        statusEl.textContent = reversedBlue
+          ? "blue cat reversed direction and moved."
+          : yellowJumped
+            ? "yellow cat jumped forward."
+            : `${cat.color} cat moved and stopped by another cat.`;
       }
     }
 
-    renderCats();
-    if (wokeGreen) {
-      statusEl.textContent = reversedBlue
-        ? "A green cat woke up. blue cat reversed and stopped."
-        : `${cat.color} cat moved and woke a green cat.`;
-    } else {
-      statusEl.textContent = reversedBlue
-        ? "blue cat reversed direction and moved."
-        : yellowJumped
-          ? "yellow cat jumped forward."
-          : `${cat.color} cat moved and stopped by another cat.`;
+    if (stop && !stop.escaped) {
+      const remaining = state.cats.length;
+      if (remaining === 0) {
+        state.gameOver = true;
+        state.endState = {
+          outcome: "won",
+          message: "All cats exited. You win!",
+        };
+        statusEl.textContent = "All cats exited. You win!";
+      }
     }
+  } finally {
     state.movingCats.delete(catId);
-  }
-
-  if (!stop.escaped) {
-    const remaining = state.cats.length;
-    if (remaining === 0) {
-      state.gameOver = true;
-      state.endState = {
-        outcome: "won",
-        message: "All cats exited. You win!",
-      };
-      statusEl.textContent = "All cats exited. You win!";
-    }
   }
 }
 
 function newPuzzle() {
+  boxExitChain = Promise.resolve();
+  state.movingCats.clear();
   state.cats = generatePuzzle();
   if (getRequirementMode() === "treats") {
     initTreats(state.cats);
