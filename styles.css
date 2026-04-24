@@ -47,8 +47,8 @@ body {
 
 #game-shell {
   /* Prefer dynamic viewport on mobile so the board fits above browser chrome. */
-  width: min(96.5vw, calc(96.5vh * 9 / 16));
-  height: min(96.5vh, calc(96.5vw * 16 / 9));
+  width: min(98vw, calc(98vh * 9 / 16));
+  height: min(98vh, calc(98vw * 16 / 9));
   max-height: 100vh;
   aspect-ratio: 9 / 16;
   border-radius: 0 0 22px 22px;
@@ -62,8 +62,8 @@ body {
 
 @supports (height: 100dvh) {
   #game-shell {
-    width: min(96.5vw, calc(96.5dvh * 9 / 16));
-    height: min(96.5dvh, calc(96.5vw * 16 / 9));
+    width: min(98vw, calc(98dvh * 9 / 16));
+    height: min(98dvh, calc(98vw * 16 / 9));
     max-height: 100dvh;
   }
 }
@@ -214,6 +214,7 @@ body {
   user-select: none;
   overflow: hidden;
   padding: 0;
+  color: #f6f8ff;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
@@ -242,6 +243,7 @@ body {
   display: inline-block;
   font-size: 0.92rem;
   line-height: 1;
+  color: inherit;
   text-shadow: 0 1px 0 rgb(0 0 0 / 20%);
 }
 
