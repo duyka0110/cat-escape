@@ -14,6 +14,7 @@ const LEVEL_COLOR_POOLS = {
   4: ["red", "green", "yellow"],
   5: ["red", "green", "yellow", "blue"],
 };
+const BOX_CATS_COLOR_POOL = ["red", "green", "blue", "yellow", "brown", "purple"];
 
 function getSelectedLevel() {
   const n = Number(levelSelectEl?.value);
@@ -21,8 +22,30 @@ function getSelectedLevel() {
   return 5;
 }
 
+function getRequirementMode() {
+  const mode = requirementSelectEl?.value;
+  if (mode === "treats") return "treats";
+  if (mode === "box-cats-multi") return "box-cats-multi";
+  if (mode === "box-cats") return "box-cats";
+  return "side-houses";
+}
+
 function getActiveColorPool() {
+  if (getRequirementMode() === "treats") return LEVEL_COLOR_POOLS[3];
+  if (isAnyBoxCatsMode()) return BOX_CATS_COLOR_POOL;
   return LEVEL_COLOR_POOLS[getSelectedLevel()] ?? LEVEL_COLOR_POOLS[5];
+}
+
+function isBoxCatsOneColorMode() {
+  return getRequirementMode() === "box-cats";
+}
+
+function isBoxCatsMultiColorMode() {
+  return getRequirementMode() === "box-cats-multi";
+}
+
+function isAnyBoxCatsMode() {
+  return isBoxCatsOneColorMode() || isBoxCatsMultiColorMode();
 }
 
 /** ~50% faster than the current movement speed. */
@@ -79,11 +102,25 @@ const EXIT_SIDE_BY_DIR = {
 const HOUSE_ORDER = ["top", "bottom", "left", "right"];
 const WAITLIST_MAX = 5;
 const HOUSE_REQUIREMENT_SIZE = 2;
+const TREAT_TRAY_COUNT = 3;
+const TREAT_WAITLIST_MAX = 5;
+const TREAT_COLORS = ["red", "green", "blue"];
+const BOX_CATS_COUNT = 4;
+const BOX_CATS_MIN_REQUIREMENT = 2;
+const BOX_CATS_MAX_REQUIREMENT = 4;
+const BOX_CATS_WAITLIST_MAX = 5;
 
 const state = {
   cats: [],
   houses: {},
   waitlist: [],
+  treats: [],
+  treatTrays: [],
+  treatWaitlist: [],
+  boxCatsBoxes: [],
+  boxCatsWaitlist: [],
+  /** "won" | "lost" | null — Treats mode end state */
+  treatsOutcome: null,
   gameOver: false,
   movingCats: new Set(),
 };
@@ -95,6 +132,12 @@ const runnerLayerEl = document.getElementById("runner-layer");
 const statusEl = document.getElementById("status");
 const regenBtn = document.getElementById("regen-btn");
 const levelSelectEl = document.getElementById("level-select");
+const requirementSelectEl = document.getElementById("requirement-select");
+const gameShellEl = document.getElementById("game-shell");
+const appEl = document.getElementById("app");
+const treatsModalEl = document.getElementById("treats-modal");
+const treatsModalMsgEl = document.getElementById("treats-modal-msg");
+const treatsModalBtnEl = document.getElementById("treats-modal-btn");
 
 const random = (n) => Math.floor(Math.random() * n);
 const choose = (arr) => arr[random(arr.length)];
@@ -112,6 +155,7 @@ function shuffle(arr) {
 
 function catLength(cat) {
   if (cat.color === "purple") {
+    if (isBoxCatsMultiColorMode()) return 2;
     return cat.mode === "stretch" ? 2 : 1;
   }
   return 2;
@@ -574,6 +618,12 @@ function generateRequirement(side, cats) {
 function initHouses(cats) {
   state.gameOver = false;
   state.waitlist = [];
+  state.treats = [];
+  state.treatTrays = [];
+  state.treatWaitlist = [];
+  state.boxCatsBoxes = [];
+  state.boxCatsWaitlist = [];
+  state.treatsOutcome = null;
   state.houses = {};
   for (const side of HOUSE_ORDER) {
     state.houses[side] = {
@@ -581,6 +631,415 @@ function initHouses(cats) {
       accepted: [],
     };
   }
+}
+
+function multisetFromArray(arr) {
+  const m = new Map();
+  for (const x of arr) m.set(x, (m.get(x) || 0) + 1);
+  return m;
+}
+
+function roadTreatColorCounts() {
+  const m = new Map();
+  for (const t of state.treats) {
+    if (!t.taken) m.set(t.color, (m.get(t.color) || 0) + 1);
+  }
+  return m;
+}
+
+function treatWaitlistColorCounts() {
+  const m = new Map();
+  for (const c of state.treatWaitlist) m.set(c, (m.get(c) || 0) + 1);
+  return m;
+}
+
+function canSatisfyTreatRequirement(req) {
+  if (!req.length) return true;
+  const need = multisetFromArray(req);
+  const road = roadTreatColorCounts();
+  const wait = treatWaitlistColorCounts();
+  for (const [c, k] of need) {
+    const avail = (road.get(c) || 0) + (wait.get(c) || 0);
+    if (avail < k) return false;
+  }
+  return true;
+}
+
+function generateNewTreatRequirement() {
+  const R = state.treats.filter((t) => !t.taken).length;
+  const W = state.treatWaitlist.length;
+  const maxSlots = Math.min(2, R + W);
+  if (maxSlots < 1) return [];
+  const targetN = maxSlots === 1 ? 1 : random(2) + 1;
+  const n = Math.min(targetN, maxSlots);
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const req = [];
+    for (let i = 0; i < n; i++) req.push(choose(TREAT_COLORS));
+    if (canSatisfyTreatRequirement(req)) return req;
+  }
+  for (const c of TREAT_COLORS) {
+    if (canSatisfyTreatRequirement([c])) return [c];
+  }
+  return [];
+}
+
+function laneForSideFromCat(cat, side) {
+  if (side === "left" || side === "right") return cat.y;
+  if (side === "top" || side === "bottom") return cat.x;
+  return 0;
+}
+
+function generateTreats(cats) {
+  return cats.map((cat, idx) => {
+    const side = EXIT_SIDE_BY_DIR[cat.dir];
+    const lane = laneForSideFromCat(cat, side);
+    const color = TREAT_COLORS.includes(cat.color) ? cat.color : choose(TREAT_COLORS);
+    return { id: `treat-${idx + 1}`, side, lane, color, taken: false };
+  });
+}
+
+function initTreats(cats) {
+  state.gameOver = false;
+  state.waitlist = [];
+  state.houses = {};
+  state.boxCatsBoxes = [];
+  state.boxCatsWaitlist = [];
+  state.treatWaitlist = [];
+  state.treatsOutcome = null;
+  state.treats = generateTreats(cats);
+  state.treatTrays = Array.from({ length: TREAT_TRAY_COUNT }, () => ({
+    requirement: generateNewTreatRequirement(),
+    accepted: [],
+  }));
+  settleTreatWaitlistToTrays();
+}
+
+function unresolvedBoxNeeds(excludeIndex = -1) {
+  const needed = {};
+  for (let i = 0; i < state.boxCatsBoxes.length; i++) {
+    if (i === excludeIndex) continue;
+    const box = state.boxCatsBoxes[i];
+    const openByColor = boxNeedsByColor(box);
+    for (const [color, openSlots] of openByColor.entries()) {
+      if (!openSlots) continue;
+      needed[color] = (needed[color] || 0) + openSlots;
+    }
+  }
+  return needed;
+}
+
+function boardColorCounts() {
+  const counts = {};
+  for (const cat of state.cats) counts[cat.color] = (counts[cat.color] || 0) + 1;
+  return counts;
+}
+
+function boxRequirementColors(box) {
+  if (!box) return [];
+  if (Array.isArray(box.requirementColors)) return box.requirementColors.slice();
+  if (box.color && box.requirement > 0) return Array.from({ length: box.requirement }, () => box.color);
+  return [];
+}
+
+function boxNeedsByColor(box) {
+  const req = colorCountsFromList(boxRequirementColors(box));
+  const accepted = colorCountsFromList(box?.accepted || []);
+  const open = new Map();
+  for (const [color, needed] of req.entries()) {
+    const remain = needed - (accepted.get(color) || 0);
+    if (remain > 0) open.set(color, remain);
+  }
+  return open;
+}
+
+function boxCanAcceptColor(box, color) {
+  return (boxNeedsByColor(box).get(color) || 0) > 0;
+}
+
+function emptyBoxRequirement() {
+  return { color: null, requirement: 0, requirementColors: [], accepted: [] };
+}
+
+function boxRequirementPool(excludeIndex = -1) {
+  const boardCounts = boardColorCounts();
+  const waitCountsMap = colorCountsFromList(state.boxCatsWaitlist);
+  const waitCounts = {};
+  for (const [color, n] of waitCountsMap.entries()) waitCounts[color] = n;
+  const reserved = unresolvedBoxNeeds(excludeIndex);
+  const allColors = new Set([...Object.keys(boardCounts), ...Object.keys(waitCounts)]);
+
+  const pool = [];
+  for (const color of allColors) {
+    const reservedNeed = reserved[color] || 0;
+    let boardRemaining = boardCounts[color] || 0;
+    let waitRemaining = waitCounts[color] || 0;
+
+    // Active boxes consume capacity from board first, then waitlist.
+    const fromBoard = Math.min(boardRemaining, reservedNeed);
+    boardRemaining -= fromBoard;
+    const fromWait = Math.min(waitRemaining, Math.max(0, reservedNeed - fromBoard));
+    waitRemaining -= fromWait;
+
+    const remaining = boardRemaining + waitRemaining;
+    if (remaining > 0) {
+      pool.push({ color, remaining, boardRemaining, waitRemaining });
+    }
+  }
+  return pool;
+}
+
+function generateBoxCatsRequirementOneColor(excludeIndex = -1) {
+  const pool = boxRequirementPool(excludeIndex);
+  if (!pool.length) return null;
+  // Lower priority for waitlist: prefer colors with board supply first.
+  const boardFirst = pool.filter((p) => p.boardRemaining > 0);
+  const fallbackAll = pool;
+  const sourcePool = boardFirst.length ? boardFirst : fallbackAll;
+  const strictPool = sourcePool.filter((p) => p.remaining >= BOX_CATS_MIN_REQUIREMENT);
+  const fallbackPool = sourcePool.filter((p) => p.remaining >= 1);
+  const source = strictPool.length ? strictPool : fallbackPool;
+  if (!source.length) return null;
+  const pick = choose(source);
+  const maxN = Math.min(BOX_CATS_MAX_REQUIREMENT, pick.remaining);
+  const minN = strictPool.length ? BOX_CATS_MIN_REQUIREMENT : 1;
+  if (maxN < minN) return null;
+  const span = maxN - minN + 1;
+  const requirement = minN + random(span);
+  return {
+    color: pick.color,
+    requirement,
+    requirementColors: Array.from({ length: requirement }, () => pick.color),
+    accepted: [],
+  };
+}
+
+function generateBoxCatsRequirementMultiColor(excludeIndex = -1) {
+  const pool = boxRequirementPool(excludeIndex);
+  if (!pool.length) return null;
+  const bag = [];
+  for (const entry of pool) {
+    for (let i = 0; i < entry.remaining; i++) bag.push(entry.color);
+  }
+  if (bag.length < BOX_CATS_MIN_REQUIREMENT) return null;
+
+  const maxN = Math.min(BOX_CATS_MAX_REQUIREMENT, bag.length);
+  const n = BOX_CATS_MIN_REQUIREMENT + random(maxN - BOX_CATS_MIN_REQUIREMENT + 1);
+  const picked = [];
+  const bagCopy = bag.slice();
+  for (let i = 0; i < n && bagCopy.length; i++) {
+    const idx = random(bagCopy.length);
+    picked.push(bagCopy[idx]);
+    bagCopy.splice(idx, 1);
+  }
+  if (picked.length < BOX_CATS_MIN_REQUIREMENT) return null;
+  return {
+    color: null,
+    requirement: picked.length,
+    requirementColors: picked,
+    accepted: [],
+  };
+}
+
+function fillOneBoxFromColor(color) {
+  for (let i = 0; i < state.boxCatsBoxes.length; i++) {
+    const box = state.boxCatsBoxes[i];
+    if (!boxCanAcceptColor(box, color)) continue;
+    box.accepted.push(color);
+    return i;
+  }
+  return -1;
+}
+
+function settleBoxCatsWaitlist() {
+  let moved = false;
+  for (let loops = 0; loops < 80; loops++) {
+    let progressed = false;
+    for (let i = 0; i < state.boxCatsWaitlist.length; i++) {
+      const color = state.boxCatsWaitlist[i];
+      const idx = fillOneBoxFromColor(color);
+      if (idx >= 0) {
+        state.boxCatsWaitlist.splice(i, 1);
+        i -= 1;
+        progressed = true;
+        moved = true;
+      }
+    }
+    if (!progressed) break;
+  }
+  return moved;
+}
+
+function colorCountsFromList(colors) {
+  const m = new Map();
+  for (const c of colors) m.set(c, (m.get(c) || 0) + 1);
+  return m;
+}
+
+function boxCatsNeededColorCounts() {
+  const m = new Map();
+  for (const box of state.boxCatsBoxes) {
+    const openByColor = boxNeedsByColor(box);
+    for (const [color, open] of openByColor.entries()) {
+      if (!open) continue;
+      m.set(color, (m.get(color) || 0) + open);
+    }
+  }
+  return m;
+}
+
+function boxCatsExitableColorCounts() {
+  const m = new Map();
+  for (const cat of state.cats) {
+    const stop = computeStopFor(cat, state.cats);
+    if (!stop.escaped) continue;
+    m.set(cat.color, (m.get(cat.color) || 0) + 1);
+  }
+  return m;
+}
+
+function hasAnyColorOverlap(need, supply) {
+  for (const [color, n] of need.entries()) {
+    if (n <= 0) continue;
+    if ((supply.get(color) || 0) > 0) return true;
+  }
+  return false;
+}
+
+function evaluateBoxCatsEndState() {
+  if (!isAnyBoxCatsMode()) return null;
+  if (state.cats.length === 0) {
+    state.gameOver = true;
+    return { outcome: "won" };
+  }
+
+  if (state.boxCatsWaitlist.length < BOX_CATS_WAITLIST_MAX) return null;
+  const need = boxCatsNeededColorCounts();
+  if (need.size === 0) return null;
+
+  const waitSupply = colorCountsFromList(state.boxCatsWaitlist);
+  if (hasAnyColorOverlap(need, waitSupply)) return null;
+
+  const exitableSupply = boxCatsExitableColorCounts();
+  if (hasAnyColorOverlap(need, exitableSupply)) return null;
+
+  state.gameOver = true;
+  return { outcome: "lost", reason: "deadlock-full-waitlist" };
+}
+
+function initBoxCats(cats) {
+  state.gameOver = false;
+  state.waitlist = [];
+  state.houses = {};
+  state.treats = [];
+  state.treatTrays = [];
+  state.treatWaitlist = [];
+  state.treatsOutcome = null;
+  state.boxCatsWaitlist = [];
+  state.boxCatsBoxes = [];
+  const generator = isBoxCatsMultiColorMode()
+    ? generateBoxCatsRequirementMultiColor
+    : generateBoxCatsRequirementOneColor;
+  for (let i = 0; i < BOX_CATS_COUNT; i++) {
+    state.boxCatsBoxes.push(generator(i) || emptyBoxRequirement());
+  }
+}
+
+function peekApplyColorToTreatTrays(color) {
+  for (let trayIndex = 0; trayIndex < state.treatTrays.length; trayIndex++) {
+    const tray = state.treatTrays[trayIndex];
+    if (!tray.requirement.length) continue;
+    const need = multisetFromArray(tray.requirement);
+    const got = multisetFromArray(tray.accepted);
+    if ((got.get(color) || 0) >= (need.get(color) || 0)) continue;
+    return { trayIndex };
+  }
+  return null;
+}
+
+function applyColorToTreatTrays(color) {
+  for (let trayIndex = 0; trayIndex < state.treatTrays.length; trayIndex++) {
+    const tray = state.treatTrays[trayIndex];
+    if (!tray.requirement.length) continue;
+    const need = multisetFromArray(tray.requirement);
+    const got = multisetFromArray(tray.accepted);
+    if ((got.get(color) || 0) >= (need.get(color) || 0)) continue;
+    tray.accepted.push(color);
+    let completedTray = false;
+    if (tray.accepted.length >= tray.requirement.length) {
+      completedTray = true;
+      tray.requirement = generateNewTreatRequirement();
+      tray.accepted = [];
+    }
+    return { trayIndex, completedTray };
+  }
+  return null;
+}
+
+function settleTreatWaitlistToTrays() {
+  for (let g = 0; g < 80; g++) {
+    let moved = false;
+    for (let i = 0; i < state.treatWaitlist.length; i++) {
+      const c = state.treatWaitlist[i];
+      if (applyColorToTreatTrays(c)) {
+        state.treatWaitlist.splice(i, 1);
+        i -= 1;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+function laneForExit(side, exitCell) {
+  if (side === "left" || side === "right") return exitCell.y;
+  return exitCell.x;
+}
+
+function findTreatForExit(cat, side, exitCell) {
+  if (!exitCell || !TREAT_COLORS.includes(cat.color)) return null;
+  const lane = laneForExit(side, exitCell);
+  return (
+    state.treats.find(
+      (t) => !t.taken && t.side === side && t.lane === lane && t.color === cat.color
+    ) || null
+  );
+}
+
+function maybeTreatsWinAfterMove() {
+  if (state.treats.some((t) => !t.taken)) return;
+  if (state.treatWaitlist.length) return;
+  const ok = state.treatTrays.every(
+    (t) => !t.requirement.length || t.accepted.length >= t.requirement.length
+  );
+  if (ok) {
+    state.gameOver = true;
+    state.treatsOutcome = "won";
+  }
+}
+
+function tryCollectTreat(cat, side, exitCell) {
+  const treat = findTreatForExit(cat, side, exitCell);
+  if (!treat) return { outcome: "no-treat" };
+  treat.taken = true;
+  const applied = applyColorToTreatTrays(treat.color);
+  if (applied) {
+    settleTreatWaitlistToTrays();
+    maybeTreatsWinAfterMove();
+    return {
+      outcome: applied.completedTray ? "tray-complete" : "delivered",
+      color: treat.color,
+      trayIndex: applied.trayIndex,
+    };
+  }
+  if (state.treatWaitlist.length >= TREAT_WAITLIST_MAX) {
+    state.gameOver = true;
+    state.treatsOutcome = "lost";
+    return { outcome: "waitlist-full", color: treat.color };
+  }
+  state.treatWaitlist.push(treat.color);
+  settleTreatWaitlistToTrays();
+  maybeTreatsWinAfterMove();
+  return { outcome: "waitlist", color: treat.color };
 }
 
 function consumeHouseRequirement(side, color) {
@@ -635,6 +1094,14 @@ function settleWaitlistToHouses() {
 
 function renderHouses() {
   housesEl.innerHTML = "";
+  if (getRequirementMode() === "treats") {
+    renderTreatsOverlay();
+    return;
+  }
+  if (isAnyBoxCatsMode()) {
+    renderBoxCatsOverlay();
+    return;
+  }
   const boardRect = boardEl.getBoundingClientRect();
   const playRect = housesEl.getBoundingClientRect();
   const boardLeft = boardRect.left - playRect.left;
@@ -704,6 +1171,487 @@ function renderHouses() {
   }
 }
 
+function renderBoxCatsOverlay() {
+  const topStack = document.createElement("div");
+  topStack.className = "boxcats-top-stack";
+
+  const strip = document.createElement("div");
+  strip.className = "boxcats-strip";
+  state.boxCatsBoxes.forEach((box, idx) => {
+    const node = document.createElement("div");
+    node.className = "boxcat-box";
+    node.dataset.boxIndex = String(idx);
+    if (box.departing) node.classList.add("departing");
+    const requirementColors = boxRequirementColors(box);
+    if (!requirementColors.length) {
+      node.innerHTML = '<div class="boxcat-box-label">No box</div>';
+      strip.appendChild(node);
+      return;
+    }
+    const isMulti = isBoxCatsMultiColorMode();
+    if (!isMulti && box.color) {
+      node.style.borderColor = CAT_COLORS[box.color] || "rgb(255 255 255 / 16%)";
+      node.innerHTML = `<div class="boxcat-box-label">${box.color}</div>`;
+    } else {
+      node.innerHTML = `<div class="boxcat-box-label">Box ${idx + 1}</div>`;
+    }
+    const row = document.createElement("div");
+    row.className = "boxcat-pill-row";
+    const acceptedCounts = multisetFromArray(box.accepted || []);
+    const usedCounts = new Map();
+    for (let i = 0; i < requirementColors.length; i++) {
+      const color = requirementColors[i];
+      const pill = document.createElement("span");
+      pill.className = "boxcat-pill";
+      pill.style.borderColor = CAT_COLORS[color] || "#fff";
+      const used = usedCounts.get(color) || 0;
+      const have = acceptedCounts.get(color) || 0;
+      if (used < have) {
+        usedCounts.set(color, used + 1);
+        pill.classList.add("filled");
+        pill.style.background = CAT_COLORS[color] || "#fff";
+      }
+      row.appendChild(pill);
+    }
+    node.appendChild(row);
+    strip.appendChild(node);
+  });
+  topStack.appendChild(strip);
+
+  const waitRow = document.createElement("div");
+  waitRow.id = "boxcat-waitlist-row";
+  waitRow.className = "boxcat-waitlist-row";
+  waitRow.innerHTML = `<div class="boxcat-waitlist-title">Waitlist (${state.boxCatsWaitlist.length}/${BOX_CATS_WAITLIST_MAX})</div>`;
+  const waitPills = document.createElement("div");
+  waitPills.className = "boxcat-wait-pills";
+  for (let i = 0; i < BOX_CATS_WAITLIST_MAX; i++) {
+    const slot = document.createElement("span");
+    if (state.boxCatsWaitlist[i]) {
+      slot.className = "boxcat-wait-slot filled";
+      slot.style.background = CAT_COLORS[state.boxCatsWaitlist[i]] || "#fff";
+    } else {
+      slot.className = "boxcat-wait-slot";
+    }
+    waitPills.appendChild(slot);
+  }
+  waitRow.appendChild(waitPills);
+  topStack.appendChild(waitRow);
+  housesEl.appendChild(topStack);
+}
+
+function treatPosition(side, lane, boardRect, playRect) {
+  const margin = 18;
+  const boardLeft = boardRect.left - playRect.left;
+  const boardTop = boardRect.top - playRect.top;
+  const cellW = boardRect.width / CONFIG.cols;
+  const cellH = boardRect.height / CONFIG.rows;
+  if (side === "left") {
+    return { x: boardLeft - margin, y: boardTop + (lane + 0.5) * cellH };
+  }
+  if (side === "right") {
+    return { x: boardLeft + boardRect.width + margin, y: boardTop + (lane + 0.5) * cellH };
+  }
+  if (side === "top") {
+    return { x: boardLeft + (lane + 0.5) * cellW, y: boardTop - margin };
+  }
+  return { x: boardLeft + (lane + 0.5) * cellW, y: boardTop + boardRect.height + margin };
+}
+
+function renderTreatsOverlay() {
+  const boardRect = boardEl.getBoundingClientRect();
+  const playRect = housesEl.getBoundingClientRect();
+
+  const topStack = document.createElement("div");
+  topStack.className = "treats-top-stack";
+
+  const trayStrip = document.createElement("div");
+  trayStrip.className = "tray-strip";
+  state.treatTrays.forEach((tray, idx) => {
+    const trayNode = document.createElement("div");
+    trayNode.className = "tray";
+    trayNode.dataset.trayIndex = String(idx);
+    trayNode.innerHTML = `<div class="tray-title">Tray ${idx + 1}</div>`;
+    const pills = document.createElement("div");
+    pills.className = "treat-tray-pills";
+    const acceptedCounts = multisetFromArray(tray.accepted);
+    const usedCounts = new Map();
+    const reqLen = tray.requirement.length;
+    for (let i = 0; i < reqLen; i++) {
+      const color = tray.requirement[i];
+      const slot = document.createElement("span");
+      slot.className = "treat-pill-slot";
+      const pill = document.createElement("span");
+      pill.className = "treat-pill";
+      pill.style.background = CAT_COLORS[color] || "#fff";
+      slot.appendChild(pill);
+      const used = usedCounts.get(color) || 0;
+      const have = acceptedCounts.get(color) || 0;
+      const filled = used < have;
+      if (filled) {
+        usedCounts.set(color, used + 1);
+        slot.classList.add("filled");
+        const mark = document.createElement("span");
+        mark.className = "treat-check";
+        mark.setAttribute("aria-hidden", "true");
+        mark.textContent = "✓";
+        slot.appendChild(mark);
+      }
+      pills.appendChild(slot);
+    }
+    trayNode.appendChild(pills);
+    trayStrip.appendChild(trayNode);
+  });
+  topStack.appendChild(trayStrip);
+
+  const waitRow = document.createElement("div");
+  waitRow.id = "treat-waitlist-row";
+  waitRow.className = "treat-waitlist-row";
+  waitRow.innerHTML = `<div class="treat-waitlist-title">Waitlist (${state.treatWaitlist.length}/${TREAT_WAITLIST_MAX})</div>`;
+  const waitPills = document.createElement("div");
+  waitPills.className = "treat-waitlist-pills";
+  for (let i = 0; i < TREAT_WAITLIST_MAX; i++) {
+    const slot = document.createElement("span");
+    if (state.treatWaitlist[i]) {
+      slot.className = "treat-wait-slot filled";
+      slot.style.background = CAT_COLORS[state.treatWaitlist[i]] || "#fff";
+    } else {
+      slot.className = "treat-wait-slot";
+    }
+    waitPills.appendChild(slot);
+  }
+  waitRow.appendChild(waitPills);
+  topStack.appendChild(waitRow);
+  housesEl.appendChild(topStack);
+
+  for (const treat of state.treats) {
+    const node = document.createElement("span");
+    node.className = "treat-node";
+    if (treat.taken) node.classList.add("taken");
+    node.style.background = CAT_COLORS[treat.color] || "#fff";
+    const pos = treatPosition(treat.side, treat.lane, boardRect, playRect);
+    node.style.left = `${pos.x}px`;
+    node.style.top = `${pos.y}px`;
+    housesEl.appendChild(node);
+  }
+
+  updateTreatsEndModal();
+}
+
+function updateTreatsEndModal() {
+  if (!treatsModalEl || getRequirementMode() !== "treats") {
+    if (treatsModalEl) treatsModalEl.hidden = true;
+    return;
+  }
+  if (!state.treatsOutcome) {
+    treatsModalEl.hidden = true;
+    return;
+  }
+  treatsModalEl.hidden = false;
+  if (state.treatsOutcome === "won") {
+    treatsModalMsgEl.textContent = "All treats collected and delivered. You win!";
+    treatsModalBtnEl.textContent = "Play again";
+  } else {
+    treatsModalMsgEl.textContent = "Treat waitlist is full. You lose.";
+    treatsModalBtnEl.textContent = "Retry";
+  }
+}
+
+function distPointToSegment(p, a, b) {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const ab2 = abx * abx + aby * aby;
+  const apx = p.x - a.x;
+  const apy = p.y - a.y;
+  let t = ab2 < 1e-8 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / ab2));
+  const cx = a.x + t * abx;
+  const cy = a.y + t * aby;
+  return { x: cx, y: cy, t, dist: Math.hypot(p.x - cx, p.y - cy) };
+}
+
+function perimeterLengthFromBox(box) {
+  const w = box.right - box.left;
+  const h = box.bottom - box.top;
+  return 2 * w + 2 * h;
+}
+
+function projectToSOnRoad(box, p) {
+  const { left, right, top, bottom } = box;
+  const w = right - left;
+  const h = bottom - top;
+  const segs = [
+    { a: { x: right, y: top }, b: { x: left, y: top }, s0: 0, len: w },
+    { a: { x: left, y: top }, b: { x: left, y: bottom }, s0: w, len: h },
+    { a: { x: left, y: bottom }, b: { x: right, y: bottom }, s0: w + h, len: w },
+    { a: { x: right, y: bottom }, b: { x: right, y: top }, s0: 2 * w + h, len: h },
+  ];
+  let bestS = 0;
+  let bestD = Infinity;
+  for (const sg of segs) {
+    const r = distPointToSegment(p, sg.a, sg.b);
+    const s = sg.s0 + r.t * sg.len;
+    if (r.dist < bestD) {
+      bestD = r.dist;
+      bestS = s;
+    }
+  }
+  return bestS;
+}
+
+function pointAtSOnRoad(box, s) {
+  const { left, right, top, bottom } = box;
+  const w = right - left;
+  const h = bottom - top;
+  const L = 2 * w + 2 * h;
+  s = ((s % L) + L) % L;
+  if (s <= w) return { x: right - s, y: top };
+  s -= w;
+  if (s <= h) return { x: left, y: top + s };
+  s -= h;
+  if (s <= w) return { x: left + s, y: bottom };
+  s -= w;
+  return { x: right, y: bottom - s };
+}
+
+/** Shortest route along the road rectangle (either direction on the perimeter). */
+function shortestPathAlongRoad(box, from, to) {
+  const L = perimeterLengthFromBox(box);
+  let s0 = projectToSOnRoad(box, from);
+  let s1 = projectToSOnRoad(box, to);
+  s0 = ((s0 % L) + L) % L;
+  s1 = ((s1 % L) + L) % L;
+  const distForward = s1 >= s0 ? s1 - s0 : s1 + L - s0;
+  const distBackward = L - distForward;
+  if (distForward < 1e-6) return [pointAtSOnRoad(box, s0)];
+
+  const useForward = distForward <= distBackward;
+  const dist = useForward ? distForward : distBackward;
+  const steps = Math.max(2, Math.ceil(dist / 14));
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps;
+    const s = useForward ? s0 + distForward * u : s0 - distBackward * u;
+    pts.push(pointAtSOnRoad(box, s));
+  }
+  return pts;
+}
+
+function roadApproachPoint(box, dest) {
+  const { left, right, top, bottom } = box;
+  if (dest.y < top) return { x: Math.max(left, Math.min(right, dest.x)), y: top };
+  if (dest.y > bottom) return { x: Math.max(left, Math.min(right, dest.x)), y: bottom };
+  if (dest.x < left) return { x: left, y: Math.max(top, Math.min(bottom, dest.y)) };
+  if (dest.x > right) return { x: right, y: Math.max(top, Math.min(bottom, dest.y)) };
+  return {
+    x: Math.max(left, Math.min(right, dest.x)),
+    y: Math.max(top, Math.min(bottom, dest.y)),
+  };
+}
+
+/**
+ * @returns {{ points: {x:number,y:number}[], treatPickupEndIndex: number }}
+ * `treatPickupEndIndex` is the path index when the cat reaches the road treat (-1 if none).
+ */
+function buildTreatExitPath(cat, side, exitCell) {
+  const playRect = boardEl.parentElement.getBoundingClientRect();
+  const boardRect = boardEl.getBoundingClientRect();
+  const box = roadBox();
+  const start = gridCellCenter(exitCell);
+  const edgeBySide = {
+    left: { x: box.left, y: start.y },
+    right: { x: box.right, y: start.y },
+    top: { x: start.x, y: box.top },
+    bottom: { x: start.x, y: box.bottom },
+  };
+  const edge = edgeBySide[side] || start;
+  const treat = findTreatForExit(cat, side, exitCell);
+
+  const points = [];
+  const pushPt = (p) => {
+    const last = points[points.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.8) points.push(p);
+  };
+
+  pushPt(start);
+  if (Math.hypot(edge.x - start.x, edge.y - start.y) > 1) pushPt(edge);
+
+  if (!treat) return { points, treatPickupEndIndex: -1 };
+
+  const treatPt = treatPosition(treat.side, treat.lane, boardRect, playRect);
+  let cur = edge;
+  const appendAlongRoad = (target) => {
+    const seg = shortestPathAlongRoad(box, cur, target);
+    for (const p of seg) pushPt(p);
+    cur = target;
+  };
+
+  appendAlongRoad(treatPt);
+  const treatPickupEndIndex = points.length - 1;
+
+  const peek = peekApplyColorToTreatTrays(treat.color);
+  let dest = null;
+  if (peek) {
+    const trayEl = housesEl.querySelector(`.tray[data-tray-index="${peek.trayIndex}"]`);
+    if (trayEl) {
+      const r = trayEl.getBoundingClientRect();
+      dest = { x: r.left - playRect.left + r.width / 2, y: r.top - playRect.top + r.height / 2 };
+    }
+  } else {
+    const wl = document.getElementById("treat-waitlist-row");
+    if (wl) {
+      const r = wl.getBoundingClientRect();
+      dest = { x: r.left - playRect.left + r.width / 2, y: r.top - playRect.top + r.height / 2 };
+    }
+  }
+
+  if (dest) {
+    const approach = roadApproachPoint(box, dest);
+    if (Math.hypot(approach.x - cur.x, approach.y - cur.y) > 2) appendAlongRoad(approach);
+    if (Math.hypot(dest.x - points[points.length - 1].x, dest.y - points[points.length - 1].y) > 2) {
+      pushPt(dest);
+    }
+  }
+
+  return { points, treatPickupEndIndex };
+}
+
+/** Screen-space movement → same convention as DIRS.*.angle (0° = up, 90° = right). */
+function movementAngleDeg(dx, dy) {
+  if (Math.hypot(dx, dy) < 1e-6) return null;
+  return (Math.atan2(dx, -dy) * 180) / Math.PI;
+}
+
+function applyRunnerFacing(node, angleDeg, baseAngleDeg = 0) {
+  if (angleDeg == null) return;
+  const relativeAngle = angleDeg - baseAngleDeg;
+  node.style.transform = `translate(-50%, -50%) rotate(${relativeAngle}deg)`;
+  const arrow = node.querySelector(".cat-arrow");
+  if (arrow) {
+    arrow.style.transform = "";
+  }
+}
+
+/** Exit animation in treats mode: face along path, collect treat on the road before animating to tray/waitlist. */
+async function animateTreatModeExit(cat, catId, exitCell, side) {
+  const node = boardEl.querySelector(`.cat[data-id="${catId}"]`);
+  const playRect = boardEl.parentElement.getBoundingClientRect();
+  if (!node) {
+    return tryCollectTreat(cat, side, exitCell);
+  }
+  let { points, treatPickupEndIndex } = buildTreatExitPath(cat, side, exitCell);
+  points = points.slice();
+  const br = node.getBoundingClientRect();
+  if (points.length) {
+    points[0] = {
+      x: br.left - playRect.left + br.width / 2,
+      y: br.top - playRect.top + br.height / 2,
+    };
+  }
+  runnerLayerEl.appendChild(node);
+  node.style.position = "absolute";
+  node.style.width = `${br.width}px`;
+  node.style.height = `${br.height}px`;
+  node.style.left = `${points[0].x}px`;
+  node.style.top = `${points[0].y}px`;
+  node.style.transform = "translate(-50%, -50%)";
+  node.style.zIndex = "6";
+
+  let result;
+  const hasPickup = treatPickupEndIndex >= 0;
+  const roadEntry = points.length >= 2 ? points.slice(0, 2) : points.slice();
+  const afterEntry = points.length > 2 ? points.slice(1) : [];
+  const entryAngle = DIRS[cat.dir]?.angle ?? null;
+  const baseAngle = DIRS[cat.dir]?.angle ?? 0;
+
+  if (roadEntry.length >= 2) {
+    await animateCatAlongPath(node, roadEntry, { fixedAngleDeg: entryAngle, baseAngleDeg: baseAngle });
+  }
+
+  const pickupAfterEntry = hasPickup ? Math.max(0, treatPickupEndIndex - 1) : -1;
+  const toPickupAfterEntry = hasPickup ? afterEntry.slice(0, pickupAfterEntry + 1) : [];
+  const fromPickupAfterEntry = hasPickup ? afterEntry.slice(pickupAfterEntry) : [];
+
+  if (hasPickup && toPickupAfterEntry.length >= 2) {
+    await animateCatAlongPath(node, toPickupAfterEntry, { baseAngleDeg: baseAngle });
+    result = tryCollectTreat(cat, side, exitCell);
+    renderHouses();
+    if (fromPickupAfterEntry.length >= 2) {
+      await animateCatAlongPath(node, fromPickupAfterEntry, { baseAngleDeg: baseAngle });
+    }
+  } else if (!hasPickup && afterEntry.length >= 2) {
+    await animateCatAlongPath(node, afterEntry, { baseAngleDeg: baseAngle });
+    result = tryCollectTreat(cat, side, exitCell);
+  } else if (hasPickup && toPickupAfterEntry.length <= 1) {
+    result = tryCollectTreat(cat, side, exitCell);
+    renderHouses();
+    if (fromPickupAfterEntry.length >= 2) {
+      await animateCatAlongPath(node, fromPickupAfterEntry, { baseAngleDeg: baseAngle });
+    }
+  } else {
+    result = tryCollectTreat(cat, side, exitCell);
+  }
+
+  node.remove();
+  return result;
+}
+
+function animateCatAlongPath(node, points, options = {}) {
+  return new Promise((resolve) => {
+    if (!node || points.length < 2) {
+      resolve();
+      return;
+    }
+    const { fixedAngleDeg = null, baseAngleDeg = 0 } = options;
+    const segments = [];
+    let total = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const dx = points[i + 1].x - points[i].x;
+      const dy = points[i + 1].y - points[i].y;
+      const len = Math.hypot(dx, dy);
+      segments.push({ from: points[i], to: points[i + 1], len, dx, dy });
+      total += len;
+    }
+    const duration = Math.max(480, total * 2.05);
+    const start = performance.now();
+    let prevAngle =
+      fixedAngleDeg == null ? movementAngleDeg(segments[0].dx, segments[0].dy) : fixedAngleDeg;
+    applyRunnerFacing(node, prevAngle, baseAngleDeg);
+
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const distance = t * total;
+      let traveled = 0;
+      let x = points[0].x;
+      let y = points[0].y;
+      let activeSeg = segments[0];
+      for (const seg of segments) {
+        if (traveled + seg.len >= distance) {
+          const local = seg.len === 0 ? 0 : (distance - traveled) / seg.len;
+          x = seg.from.x + (seg.to.x - seg.from.x) * local;
+          y = seg.from.y + (seg.to.y - seg.from.y) * local;
+          activeSeg = seg;
+          break;
+        }
+        traveled += seg.len;
+        x = seg.to.x;
+        y = seg.to.y;
+        activeSeg = seg;
+      }
+      if (fixedAngleDeg == null) {
+        const a = movementAngleDeg(activeSeg.to.x - activeSeg.from.x, activeSeg.to.y - activeSeg.from.y);
+        if (a != null) prevAngle = a;
+      } else {
+        prevAngle = fixedAngleDeg;
+      }
+      applyRunnerFacing(node, prevAngle, baseAngleDeg);
+      node.style.left = `${x}px`;
+      node.style.top = `${y}px`;
+      if (t < 1) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
 function drawGridLines() {
   let background = boardEl.querySelector(".grid-lines");
   if (!background) {
@@ -739,10 +1687,18 @@ function drawGridLines() {
 
 function layoutBoard() {
   const playfieldRect = boardEl.parentElement.getBoundingClientRect();
-  const availLeft = playfieldRect.width * BOARD_PADDING.left;
-  const availRight = playfieldRect.width * (1 - BOARD_PADDING.right);
-  const availTop = playfieldRect.height * BOARD_PADDING.top;
-  const availBottom = playfieldRect.height * (1 - BOARD_PADDING.bottom);
+  const treatsWide = getRequirementMode() === "treats";
+  const boxMode = isAnyBoxCatsMode();
+  const compactTopUi = treatsWide || boxMode;
+  const padL = treatsWide ? 0.02 : BOARD_PADDING.left;
+  const padR = treatsWide ? 0.02 : BOARD_PADDING.right;
+  /** Reserve top band for requirement strips so they do not overlap the grid. */
+  const padT = compactTopUi ? (treatsWide ? 0.27 : 0.235) : BOARD_PADDING.top;
+  const padB = compactTopUi ? BOARD_PADDING.bottom * 0.9 : BOARD_PADDING.bottom;
+  const availLeft = playfieldRect.width * padL;
+  const availRight = playfieldRect.width * (1 - padR);
+  const availTop = playfieldRect.height * padT;
+  const availBottom = playfieldRect.height * (1 - padB);
   const availWidth = Math.max(0, availRight - availLeft);
   const availHeight = Math.max(0, availBottom - availTop);
   if (availWidth < 1 || availHeight < 1) return;
@@ -812,7 +1768,7 @@ function renderCats() {
     if (cat.color === "purple" && cat.mode === "loaf") {
       node.classList.add("cat-loaf");
     }
-    if (cat.color === "green" && cat.sleeping) {
+    if (!isBoxCatsMultiColorMode() && cat.color === "green" && cat.sleeping) {
       node.classList.add("cat-sleeping");
       node.disabled = true;
       node.innerHTML = '<span class="cat-sleep-label">zzz</span>';
@@ -901,7 +1857,7 @@ function computeStopFor(cat, cats) {
   const dir = DIRS[cat.dir];
   const segments = [];
 
-  if (cat.color !== "yellow") {
+  if (cat.color !== "yellow" || isBoxCatsMultiColorMode()) {
     let tail = { x: cat.x, y: cat.y };
     const start = { x: tail.x, y: tail.y };
     while (true) {
@@ -1243,10 +2199,20 @@ function houseCenter(side) {
   };
 }
 
+function boxCenter(index) {
+  const node = housesEl.querySelector(`.boxcat-box[data-box-index="${index}"]`);
+  if (!node) return null;
+  const rect = node.getBoundingClientRect();
+  const playRect = boardEl.parentElement.getBoundingClientRect();
+  return {
+    x: rect.left - playRect.left + rect.width / 2,
+    y: rect.top - playRect.top + rect.height / 2,
+  };
+}
+
 function pathToHouse(exitCell, side) {
   const start = gridCellCenter(exitCell);
   const box = roadBox();
-  const target = houseCenter(side);
   const points = [start];
 
   const edgeBySide = {
@@ -1257,11 +2223,32 @@ function pathToHouse(exitCell, side) {
   };
   const edge = edgeBySide[side] || start;
   points.push(edge);
+  if (getRequirementMode() === "treats") return points;
+  const target = houseCenter(side);
   if (side === "top" || side === "bottom") {
     points.push({ x: target.x, y: edge.y });
   } else {
     points.push({ x: edge.x, y: target.y });
   }
+  points.push(target);
+  return points;
+}
+
+function pathToBox(exitCell, side, boxIndex) {
+  const start = gridCellCenter(exitCell);
+  const box = roadBox();
+  const points = [start];
+  const edgeBySide = {
+    left: { x: box.left, y: start.y },
+    right: { x: box.right, y: start.y },
+    top: { x: start.x, y: box.top },
+    bottom: { x: start.x, y: box.bottom },
+  };
+  const edge = edgeBySide[side] || start;
+  points.push(edge);
+  const target = boxCenter(boxIndex);
+  if (!target) return points;
+  points.push({ x: target.x, y: edge.y });
   points.push(target);
   return points;
 }
@@ -1318,9 +2305,12 @@ function animateRunner(color, points) {
   });
 }
 
-function handleCatExit(cat) {
+function handleCatExit(cat, exitCell) {
   const side = EXIT_SIDE_BY_DIR[cat.dir];
   if (!side) return { outcome: "unknown", side };
+  if (getRequirementMode() === "treats") {
+    return tryCollectTreat(cat, side, exitCell);
+  }
   const accepted = consumeHouseRequirement(side, cat.color);
   if (accepted) return { outcome: "accepted", side };
   if (state.waitlist.length >= WAITLIST_MAX) {
@@ -1329,6 +2319,67 @@ function handleCatExit(cat) {
   }
   state.waitlist.push(cat.color);
   return { outcome: "waitlist", side };
+}
+
+function findEligibleBoxIndex(color) {
+  for (let i = 0; i < state.boxCatsBoxes.length; i++) {
+    const box = state.boxCatsBoxes[i];
+    if (!boxCanAcceptColor(box, color)) continue;
+    return i;
+  }
+  return -1;
+}
+
+async function refillBoxCatsBox(index) {
+  const old = state.boxCatsBoxes[index];
+  if (!old) return;
+  old.departing = true;
+  renderHouses();
+  await new Promise((resolve) => setTimeout(resolve, 320));
+  state.boxCatsBoxes[index] = isBoxCatsMultiColorMode()
+    ? generateBoxCatsRequirementMultiColor(index) || emptyBoxRequirement()
+    : generateBoxCatsRequirementOneColor(index) || emptyBoxRequirement();
+  settleBoxCatsWaitlist();
+  renderHouses();
+}
+
+async function processCompletedBoxCatsBoxes() {
+  for (let i = 0; i < state.boxCatsBoxes.length; i++) {
+    const box = state.boxCatsBoxes[i];
+    const required = boxRequirementColors(box).length;
+    if (!required) continue;
+    if ((box.accepted || []).length >= required) {
+      await refillBoxCatsBox(i);
+      i = -1;
+    }
+  }
+}
+
+async function handleBoxCatsExit(cat, exitCell) {
+  const side = EXIT_SIDE_BY_DIR[cat.dir];
+  const boxIndex = findEligibleBoxIndex(cat.color);
+  const path = boxIndex >= 0 ? pathToBox(exitCell, side, boxIndex) : null;
+  if (path && path.length > 1) {
+    await animateRunner(cat.color, path);
+    const idx = fillOneBoxFromColor(cat.color);
+    if (idx >= 0) {
+      renderHouses();
+      const before = state.boxCatsBoxes[idx];
+      if (before && before.accepted.length >= before.requirement) {
+        await processCompletedBoxCatsBoxes();
+        return evaluateBoxCatsEndState() || { outcome: "box-complete", boxIndex: idx };
+      }
+      return evaluateBoxCatsEndState() || { outcome: "boxed", boxIndex: idx };
+    }
+  }
+  if (state.boxCatsWaitlist.length >= BOX_CATS_WAITLIST_MAX) {
+    return evaluateBoxCatsEndState() || { outcome: "waitlist-full" };
+  }
+  state.boxCatsWaitlist.push(cat.color);
+  settleBoxCatsWaitlist();
+  await processCompletedBoxCatsBoxes();
+  renderHouses();
+  return evaluateBoxCatsEndState() || { outcome: "waitlist" };
 }
 
 function wakeGreenIfSleeping(cat) {
@@ -1342,7 +2393,7 @@ async function moveCat(catId) {
   const cat = state.cats.find((c) => c.id === catId);
   if (!cat) return;
   if (state.gameOver) return;
-  if (cat.color === "green" && cat.sleeping) {
+  if (!isBoxCatsMultiColorMode() && cat.color === "green" && cat.sleeping) {
     statusEl.textContent = "Sleeping green cats wake only when bumped.";
     return;
   }
@@ -1353,8 +2404,8 @@ async function moveCat(catId) {
   const applyBumpEffects = (blockedIds) => {
     for (const bid of blockedIds || []) {
       const blocker = state.cats.find((c) => c.id === bid);
-      if (wakeGreenIfSleeping(blocker)) wokeGreen = true;
-      if (blocker && blocker.color === "purple") {
+      if (!isBoxCatsMultiColorMode() && wakeGreenIfSleeping(blocker)) wokeGreen = true;
+      if (!isBoxCatsMultiColorMode() && blocker && blocker.color === "purple") {
         togglePurpleMode(blocker);
       }
     }
@@ -1366,35 +2417,79 @@ async function moveCat(catId) {
   if (stop.escaped) {
     await playMotionSegments(cat.id, stop.segments);
     const side = EXIT_SIDE_BY_DIR[cat.dir];
-    const path = pathToHouse(stop.exitHead, side);
-    state.cats = state.cats.filter((c) => c.id !== cat.id);
-    syncView();
-    state.movingCats.delete(catId);
-    animateRunner(cat.color, path).then(() => {
-      const result = handleCatExit(cat);
-      renderHouses();
+
+    if (getRequirementMode() === "treats") {
+      const result = await animateTreatModeExit(cat, catId, stop.exitHead, side);
+      state.cats = state.cats.filter((c) => c.id !== cat.id);
+      syncView();
+      state.movingCats.delete(catId);
       const remaining = state.cats.length;
-      if (result.outcome === "overflow") {
-        statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+      if (state.treatsOutcome === "won") {
+        statusEl.textContent = "You win! All treats delivered.";
+      } else if (state.treatsOutcome === "lost") {
+        statusEl.textContent = "Treat waitlist full. You lose.";
       } else if (remaining === 0) {
-        statusEl.textContent = "All cats exited. You win!";
-      } else if (result.outcome === "accepted") {
-        statusEl.textContent = `${cat.color} cat entered ${side} house.`;
+        statusEl.textContent = "All cats exited.";
+      } else if (result.outcome === "tray-complete") {
+        statusEl.textContent = `Tray ${result.trayIndex + 1} filled. New treats needed.`;
+      } else if (result.outcome === "delivered") {
+        statusEl.textContent = `${result.color} treat dropped on tray ${result.trayIndex + 1}.`;
+      } else if (result.outcome === "waitlist") {
+        statusEl.textContent = `${result.color} treat sent to waitlist.`;
+      } else if (result.outcome === "waitlist-full") {
+        statusEl.textContent = "Waitlist is full.";
       } else {
-        statusEl.textContent = `${cat.color} cat sent to waitlist.`;
+        statusEl.textContent = `${cat.color} cat exited (no matching road treat).`;
       }
-    });
+    } else if (isAnyBoxCatsMode()) {
+      state.cats = state.cats.filter((c) => c.id !== cat.id);
+      syncView();
+      state.movingCats.delete(catId);
+      const result = await handleBoxCatsExit(cat, stop.exitHead);
+      const remaining = state.cats.length;
+      if (result.outcome === "won" || remaining === 0) {
+        statusEl.textContent = "All cats exited the board. You win!";
+      } else if (result.outcome === "lost" || result.outcome === "waitlist-full") {
+        statusEl.textContent =
+          "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.";
+      } else if (result.outcome === "box-complete") {
+        statusEl.textContent = "Box filled and replaced with a new requirement.";
+      } else if (result.outcome === "boxed") {
+        statusEl.textContent = `${cat.color} cat filled a box slot.`;
+      } else {
+        statusEl.textContent = `${cat.color} cat routed to box waitlist.`;
+      }
+    } else {
+      const path = pathToHouse(stop.exitHead, side);
+      state.cats = state.cats.filter((c) => c.id !== cat.id);
+      syncView();
+      state.movingCats.delete(catId);
+      animateRunner(cat.color, path).then(() => {
+        const result = handleCatExit(cat, stop.exitHead);
+        renderHouses();
+        const remaining = state.cats.length;
+        if (result.outcome === "overflow") {
+          statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+        } else if (remaining === 0) {
+          statusEl.textContent = "All cats exited. You win!";
+        } else if (result.outcome === "accepted") {
+          statusEl.textContent = `${cat.color} cat entered ${side} house.`;
+        } else {
+          statusEl.textContent = `${cat.color} cat sent to waitlist.`;
+        }
+      });
+    }
   } else {
     await playMotionSegments(cat.id, stop.segments);
     cat.x = stop.tail.x;
     cat.y = stop.tail.y;
     applyBumpEffects(stop.blockedIds);
-    if (cat.color === "brown" && (stop.blockedIds || []).length > 0) {
+    if (!isBoxCatsMultiColorMode() && cat.color === "brown" && (stop.blockedIds || []).length > 0) {
       const turn = brownRotateOnBump(cat);
       if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
     }
 
-    if (cat.color === "blue" && (stop.blockedIds || []).length > 0 && !reversedBlue) {
+    if (!isBoxCatsMultiColorMode() && cat.color === "blue" && (stop.blockedIds || []).length > 0 && !reversedBlue) {
       const reverseDir = OPPOSITE_DIR[cat.dir];
       if (reverseDir) {
         // Keep the same occupied cells when flipping direction (head/tail swap),
@@ -1409,30 +2504,74 @@ async function moveCat(catId) {
         await playMotionSegments(cat.id, reverseStop.segments);
         if (reverseStop.escaped) {
           const side = EXIT_SIDE_BY_DIR[cat.dir];
-          const path = pathToHouse(reverseStop.exitHead, side);
-          state.cats = state.cats.filter((c) => c.id !== cat.id);
-          syncView();
-          state.movingCats.delete(catId);
-          animateRunner(cat.color, path).then(() => {
-            const result = handleCatExit(cat);
-            renderHouses();
+
+          if (getRequirementMode() === "treats") {
+            const result = await animateTreatModeExit(cat, catId, reverseStop.exitHead, side);
+            state.cats = state.cats.filter((c) => c.id !== cat.id);
+            syncView();
+            state.movingCats.delete(catId);
             const remaining = state.cats.length;
-            if (result.outcome === "overflow") {
-              statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+            if (state.treatsOutcome === "won") {
+              statusEl.textContent = "You win! All treats delivered.";
+            } else if (state.treatsOutcome === "lost") {
+              statusEl.textContent = "Treat waitlist full. You lose.";
             } else if (remaining === 0) {
-              statusEl.textContent = "All cats exited. You win!";
-            } else if (result.outcome === "accepted") {
-              statusEl.textContent = `blue cat entered ${side} house.`;
+              statusEl.textContent = "All cats exited.";
+            } else if (result.outcome === "tray-complete") {
+              statusEl.textContent = `Tray ${result.trayIndex + 1} filled. New treats needed.`;
+            } else if (result.outcome === "delivered") {
+              statusEl.textContent = `${result.color} treat dropped on tray ${result.trayIndex + 1}.`;
+            } else if (result.outcome === "waitlist") {
+              statusEl.textContent = `${result.color} treat sent to waitlist.`;
+            } else if (result.outcome === "waitlist-full") {
+              statusEl.textContent = "Waitlist is full.";
             } else {
-              statusEl.textContent = "blue cat routed to waitlist.";
+              statusEl.textContent = "blue cat exited (no matching road treat).";
             }
-          });
+          } else if (isAnyBoxCatsMode()) {
+            state.cats = state.cats.filter((c) => c.id !== cat.id);
+            syncView();
+            state.movingCats.delete(catId);
+            const result = await handleBoxCatsExit(cat, reverseStop.exitHead);
+            const remaining = state.cats.length;
+            if (result.outcome === "won" || remaining === 0) {
+              statusEl.textContent = "All cats exited the board. You win!";
+            } else if (result.outcome === "lost" || result.outcome === "waitlist-full") {
+              statusEl.textContent =
+                "Waitlist is full and no waitlist/exitable cats can fill current boxes. You lose.";
+            } else if (result.outcome === "box-complete") {
+              statusEl.textContent = "Box filled and replaced with a new requirement.";
+            } else if (result.outcome === "boxed") {
+              statusEl.textContent = `${cat.color} cat filled a box slot.`;
+            } else {
+              statusEl.textContent = `${cat.color} cat routed to box waitlist.`;
+            }
+          } else {
+            const path = pathToHouse(reverseStop.exitHead, side);
+            state.cats = state.cats.filter((c) => c.id !== cat.id);
+            syncView();
+            state.movingCats.delete(catId);
+            animateRunner(cat.color, path).then(() => {
+              const result = handleCatExit(cat, reverseStop.exitHead);
+              renderHouses();
+              const remaining = state.cats.length;
+              if (result.outcome === "overflow") {
+                statusEl.textContent = "Waitlist full. One more wrong cat escaped. You lose.";
+              } else if (remaining === 0) {
+                statusEl.textContent = "All cats exited. You win!";
+              } else if (result.outcome === "accepted") {
+                statusEl.textContent = `blue cat entered ${side} house.`;
+              } else {
+                statusEl.textContent = "blue cat routed to waitlist.";
+              }
+            });
+          }
           return;
         }
         cat.x = reverseStop.tail.x;
         cat.y = reverseStop.tail.y;
         applyBumpEffects(reverseStop.blockedIds);
-        if (cat.color === "brown" && (reverseStop.blockedIds || []).length > 0) {
+        if (!isBoxCatsMultiColorMode() && cat.color === "brown" && (reverseStop.blockedIds || []).length > 0) {
           const turn = brownRotateOnBump(cat);
           if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
         }
@@ -1465,13 +2604,43 @@ async function moveCat(catId) {
 
 function newPuzzle() {
   state.cats = generatePuzzle();
-  initHouses(state.cats);
-  statusEl.textContent = "Send cats to their matching road houses.";
+  if (getRequirementMode() === "treats") {
+    initTreats(state.cats);
+    statusEl.textContent = "Collect road treats to satisfy all trays.";
+  } else if (isAnyBoxCatsMode()) {
+    initBoxCats(state.cats);
+    statusEl.textContent = isBoxCatsMultiColorMode()
+      ? "Fill multi-color box slots; extras wait in queue."
+      : "Fill same-color boxes from exiting cats.";
+  } else {
+    initHouses(state.cats);
+    statusEl.textContent = "Send cats to their matching road houses.";
+  }
   syncView();
 }
 
+function syncRequirementControls() {
+  const mode = getRequirementMode();
+  const treats = mode === "treats";
+  if (gameShellEl) gameShellEl.classList.toggle("treats-mode", treats);
+  if (appEl) appEl.classList.toggle("treats-mode", treats);
+  if (mode === "treats" || mode === "box-cats" || mode === "box-cats-multi") {
+    levelSelectEl.value = "3";
+    levelSelectEl.disabled = true;
+  } else {
+    levelSelectEl.disabled = false;
+  }
+}
+
 regenBtn.addEventListener("click", newPuzzle);
-levelSelectEl.addEventListener("change", newPuzzle);
+levelSelectEl.addEventListener("change", () => {
+  syncRequirementControls();
+  newPuzzle();
+});
+requirementSelectEl.addEventListener("change", () => {
+  syncRequirementControls();
+  newPuzzle();
+});
 window.addEventListener("resize", syncView);
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", syncView);
@@ -1479,4 +2648,6 @@ if (window.visualViewport) {
 window.addEventListener("orientationchange", () => {
   requestAnimationFrame(syncView);
 });
+syncRequirementControls();
+treatsModalBtnEl?.addEventListener("click", () => newPuzzle());
 newPuzzle();

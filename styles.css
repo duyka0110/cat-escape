@@ -38,6 +38,12 @@ body {
     max(0.45rem, env(safe-area-inset-bottom)) max(0.65rem, env(safe-area-inset-left));
 }
 
+#app.treats-mode {
+  place-items: start stretch;
+  width: 100%;
+  max-width: 100%;
+}
+
 #game-shell {
   /* Prefer dynamic viewport on mobile so the board fits above browser chrome. */
   width: min(95vw, calc(95vh * 9 / 16));
@@ -58,6 +64,22 @@ body {
     width: min(95vw, calc(95dvh * 9 / 16));
     height: min(95dvh, calc(95vw * 16 / 9));
     max-height: 100dvh;
+  }
+}
+
+#game-shell.treats-mode {
+  width: 100%;
+  max-width: 100%;
+  height: min(100dvh, 100vh);
+  max-height: min(100dvh, 100vh);
+  aspect-ratio: unset;
+  border-radius: 0;
+}
+
+@supports not (height: 100dvh) {
+  #game-shell.treats-mode {
+    height: 100vh;
+    max-height: 100vh;
   }
 }
 
@@ -366,7 +388,7 @@ body {
 
 .controls-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   justify-items: center;
   gap: 0.4rem;
@@ -411,7 +433,29 @@ body {
   max-width: 100%;
 }
 
+.requirement-select-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+}
+
 #level-select {
+  width: 100%;
+  max-width: 9.5rem;
+  min-height: 44px;
+  padding: 0.38rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  background: #1f2531;
+  color: var(--text);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#requirement-select {
   width: 100%;
   max-width: 9.5rem;
   min-height: 44px;
@@ -445,4 +489,270 @@ body {
   margin: 0;
   font-size: 0.75rem;
   opacity: 0.92;
+}
+
+.treats-top-stack {
+  position: absolute;
+  top: 0.35rem;
+  left: 50%;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  z-index: 3;
+}
+
+.tray-strip {
+  display: flex;
+  gap: 0.55rem;
+}
+
+.tray {
+  background: rgb(10 12 18 / 86%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 12px;
+  padding: 0.38rem 0.52rem;
+  min-width: 6.4rem;
+  text-align: center;
+}
+
+.tray-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  opacity: 0.92;
+  letter-spacing: 0.02em;
+}
+
+.treat-tray-pills {
+  display: flex;
+  justify-content: center;
+  gap: 0.32rem;
+  margin-top: 0.28rem;
+}
+
+.treat-pill-slot {
+  position: relative;
+  width: 1.35rem;
+  height: 1.35rem;
+  display: grid;
+  place-items: center;
+}
+
+.treat-pill-slot .treat-pill {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 35%);
+  box-sizing: border-box;
+}
+
+.treat-pill-slot.filled .treat-pill {
+  opacity: 0.92;
+}
+
+.treat-check {
+  position: absolute;
+  font-size: 0.85rem;
+  font-weight: 900;
+  line-height: 1;
+  color: #f6f8ff;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 80%);
+  pointer-events: none;
+}
+
+.treat-waitlist-row {
+  text-align: center;
+  min-width: min(92vw, 20rem);
+  padding: 0.42rem 0.65rem 0.48rem;
+  background: rgb(10 12 18 / 72%);
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 12px;
+}
+
+.treat-waitlist-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  opacity: 0.9;
+  margin-bottom: 0.28rem;
+  letter-spacing: 0.02em;
+}
+
+.treat-waitlist-pills {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.treat-wait-slot {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 999px;
+  border: 2px solid rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 6%);
+}
+
+.treat-wait-slot.filled {
+  border-color: rgb(255 255 255 / 45%);
+}
+
+.treats-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 55%);
+  padding: 1rem;
+}
+
+.treats-modal[hidden] {
+  display: none !important;
+}
+
+.treats-modal-inner {
+  background: #1a202b;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 14px;
+  padding: 1rem 1.15rem;
+  max-width: 18rem;
+  text-align: center;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
+}
+
+.treats-modal-inner p {
+  margin: 0 0 0.75rem;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.treats-modal-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 0.5rem 1.2rem;
+  min-height: 44px;
+  background: #ffd66f;
+  color: #2b2100;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.treat-node {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 40%);
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 30%);
+}
+
+.treat-node.taken {
+  opacity: 0.18;
+}
+
+.boxcats-top-stack {
+  position: absolute;
+  top: 0.35rem;
+  left: 50%;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  z-index: 3;
+}
+
+.boxcats-strip {
+  display: flex;
+  gap: 0.42rem;
+}
+
+.boxcat-box {
+  min-width: 4.3rem;
+  background: rgb(10 12 18 / 86%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 12px;
+  padding: 0.34rem 0.4rem;
+  text-align: center;
+  transform: translateY(0);
+}
+
+.boxcat-box-label {
+  font-size: 0.62rem;
+  font-weight: 800;
+  opacity: 0.9;
+  margin-bottom: 0.18rem;
+}
+
+.boxcat-pill-row {
+  display: flex;
+  justify-content: center;
+  gap: 0.24rem;
+}
+
+.boxcat-pill {
+  width: 0.78rem;
+  height: 0.78rem;
+  border-radius: 999px;
+  border: 2px solid rgb(255 255 255 / 45%);
+  background: transparent;
+}
+
+.boxcat-pill.filled {
+  border-color: transparent;
+}
+
+.boxcat-box.departing {
+  animation: boxcat-depart 320ms ease forwards;
+}
+
+@keyframes boxcat-depart {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-56px) scale(0.94);
+  }
+}
+
+.boxcat-waitlist-row {
+  text-align: center;
+  min-width: min(92vw, 18.5rem);
+  padding: 0.4rem 0.62rem 0.45rem;
+  background: rgb(10 12 18 / 72%);
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 12px;
+}
+
+.boxcat-waitlist-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  opacity: 0.9;
+  margin-bottom: 0.26rem;
+  letter-spacing: 0.02em;
+}
+
+.boxcat-wait-pills {
+  display: flex;
+  justify-content: center;
+  gap: 0.34rem;
+}
+
+.boxcat-wait-slot {
+  width: 1.02rem;
+  height: 1.02rem;
+  border-radius: 999px;
+  border: 2px solid rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 6%);
+}
+
+.boxcat-wait-slot.filled {
+  border-color: rgb(255 255 255 / 45%);
 }

@@ -21,6 +21,12 @@
           <div id="runner-layer"></div>
           <div id="houses"></div>
         </section>
+        <div id="treats-modal" class="treats-modal" hidden>
+          <div class="treats-modal-inner">
+            <p id="treats-modal-msg"></p>
+            <button type="button" id="treats-modal-btn" class="treats-modal-btn">Continue</button>
+          </div>
+        </div>
         <footer id="controls">
           <div class="controls-row" role="toolbar" aria-label="Game controls">
             <details id="help-popover">
@@ -62,6 +68,15 @@
                 <option value="3">Level 3</option>
                 <option value="4">Level 4</option>
                 <option value="5" selected>Level 5</option>
+              </select>
+            </label>
+            <label class="requirement-select-wrap">
+              <span class="visually-hidden">Requirement</span>
+              <select id="requirement-select" aria-label="Requirement">
+                <option value="side-houses" selected>Side Houses</option>
+                <option value="treats">Treats</option>
+                <option value="box-cats">Box Cats one-color</option>
+                <option value="box-cats-multi">Box Cats Multi-color</option>
               </select>
             </label>
             <button id="regen-btn" type="button">New Puzzle</button>
