@@ -132,9 +132,99 @@ const state = {
 let boxExitChain = Promise.resolve();
 
 function enqueueBoxCatsExit(fn) {
-  const run = boxExitChain.then(() => fn());
+  const run = boxExitChain.then(() => Promise.resolve(fn()));
   boxExitChain = run.catch(() => {});
   return run;
+}
+
+/** Completed-box “depart” visuals lag behind logical refill; snapshots only for animation. */
+let boxDepartGhostSeq = 0;
+const boxCatsDepartGhosts = [];
+
+function snapshotBoxCatsBox(box) {
+  if (!box) return null;
+  return {
+    color: box.color,
+    requirement: box.requirement,
+    requirementColors: box.requirementColors ? box.requirementColors.slice() : [],
+    accepted: box.accepted ? box.accepted.slice() : [],
+  };
+}
+
+function scheduleBoxDepartGhost(index, snapshot) {
+  if (!snapshot || !boxRequirementColors(snapshot).length) return;
+  const id = ++boxDepartGhostSeq;
+  boxCatsDepartGhosts.push({ id, index, snapshot });
+  renderHouses();
+  setTimeout(() => {
+    const i = boxCatsDepartGhosts.findIndex((g) => g.id === id);
+    if (i >= 0) boxCatsDepartGhosts.splice(i, 1);
+    renderHouses();
+  }, 320);
+}
+
+function refillBoxCatsBoxSync(index) {
+  const old = state.boxCatsBoxes[index];
+  const snap = snapshotBoxCatsBox(old);
+  state.boxCatsBoxes[index] = isBoxCatsMultiColorMode()
+    ? generateBoxCatsRequirementMultiColor(index) || emptyBoxRequirement()
+    : generateBoxCatsRequirementOneColor(index) || emptyBoxRequirement();
+  settleBoxCatsWaitlist();
+  scheduleBoxDepartGhost(index, snap);
+}
+
+function processCompletedBoxCatsBoxesSync() {
+  for (let safety = 0; safety < 24; safety++) {
+    let progressed = false;
+    for (let i = 0; i < state.boxCatsBoxes.length; i++) {
+      const box = state.boxCatsBoxes[i];
+      const required = boxRequirementColors(box).length;
+      if (!required) continue;
+      if ((box.accepted || []).length >= required) {
+        refillBoxCatsBoxSync(i);
+        progressed = true;
+        break;
+      }
+    }
+    if (!progressed) break;
+  }
+}
+
+/** Apply box / waitlist / refill logic immediately (no travel or depart waits). */
+function applyBoxCatsExitLogic(cat, exitCell) {
+  const side = EXIT_SIDE_BY_DIR[cat.dir];
+  const boxIndex = findEligibleBoxIndex(cat.color);
+  const path = boxIndex >= 0 ? pathToBox(exitCell, side, boxIndex) : null;
+  const runnerPath = path && path.length > 1 ? path : null;
+
+  if (runnerPath) {
+    const idx = fillOneBoxFromColor(cat.color);
+    if (idx >= 0) {
+      const boxAfter = state.boxCatsBoxes[idx];
+      const required = boxRequirementColors(boxAfter).length;
+      const wasComplete = required > 0 && (boxAfter.accepted || []).length >= required;
+      processCompletedBoxCatsBoxesSync();
+      const end = evaluateBoxCatsEndState();
+      if (end) return { ...end, runnerPath };
+      if (wasComplete) return { outcome: "box-complete", boxIndex: idx, runnerPath };
+      return { outcome: "boxed", boxIndex: idx, runnerPath };
+    }
+  }
+
+  if (state.boxCatsWaitlist.length >= BOX_CATS_WAITLIST_MAX) {
+    return evaluateBoxCatsEndState() || { outcome: "waitlist-full", runnerPath: null };
+  }
+  state.boxCatsWaitlist.push(cat.color);
+  settleBoxCatsWaitlist();
+  processCompletedBoxCatsBoxesSync();
+  const end = evaluateBoxCatsEndState();
+  if (end) return { ...end, runnerPath: null };
+  return { outcome: "waitlist", runnerPath: null };
+}
+
+function scheduleBoxCatsExitVisuals(cat, result) {
+  if (!result || !result.runnerPath || result.runnerPath.length <= 1) return;
+  void animateRunner(cat.color, result.runnerPath);
 }
 
 const housesEl = document.getElementById("houses");
@@ -1254,6 +1344,47 @@ function renderHouses() {
   updateTreatsEndModal();
 }
 
+function createBoxCatBoxElement(box, idx, isGhost) {
+  const node = document.createElement("div");
+  node.className = isGhost ? "boxcat-box boxcat-box-ghost" : "boxcat-box";
+  if (!isGhost) {
+    node.dataset.boxIndex = String(idx);
+    if (box.departing) node.classList.add("departing");
+  }
+  const requirementColors = boxRequirementColors(box);
+  if (!requirementColors.length) {
+    node.innerHTML = '<div class="boxcat-box-label">No box</div>';
+    return node;
+  }
+  const isMulti = isBoxCatsMultiColorMode();
+  if (!isMulti && box.color) {
+    node.style.borderColor = CAT_COLORS[box.color] || "rgb(255 255 255 / 16%)";
+    node.innerHTML = `<div class="boxcat-box-label">${box.color}</div>`;
+  } else {
+    node.innerHTML = `<div class="boxcat-box-label">Box ${idx + 1}</div>`;
+  }
+  const row = document.createElement("div");
+  row.className = "boxcat-pill-row";
+  const acceptedCounts = multisetFromArray(box.accepted || []);
+  const usedCounts = new Map();
+  for (let i = 0; i < requirementColors.length; i++) {
+    const color = requirementColors[i];
+    const pill = document.createElement("span");
+    pill.className = "boxcat-pill";
+    pill.style.borderColor = CAT_COLORS[color] || "#fff";
+    const used = usedCounts.get(color) || 0;
+    const have = acceptedCounts.get(color) || 0;
+    if (used < have) {
+      usedCounts.set(color, used + 1);
+      pill.classList.add("filled");
+      pill.style.background = CAT_COLORS[color] || "#fff";
+    }
+    row.appendChild(pill);
+  }
+  node.appendChild(row);
+  return node;
+}
+
 function renderBoxCatsOverlay() {
   const topStack = document.createElement("div");
   topStack.className = "boxcats-top-stack";
@@ -1261,43 +1392,17 @@ function renderBoxCatsOverlay() {
   const strip = document.createElement("div");
   strip.className = "boxcats-strip";
   state.boxCatsBoxes.forEach((box, idx) => {
-    const node = document.createElement("div");
-    node.className = "boxcat-box";
-    node.dataset.boxIndex = String(idx);
-    if (box.departing) node.classList.add("departing");
-    const requirementColors = boxRequirementColors(box);
-    if (!requirementColors.length) {
-      node.innerHTML = '<div class="boxcat-box-label">No box</div>';
-      strip.appendChild(node);
-      return;
+    const wrap = document.createElement("div");
+    wrap.className = "boxcat-box-wrap";
+    wrap.appendChild(createBoxCatBoxElement(box, idx, false));
+    for (const g of boxCatsDepartGhosts) {
+      if (g.index !== idx) continue;
+      const ghost = createBoxCatBoxElement(g.snapshot, idx, true);
+      ghost.classList.add("departing");
+      ghost.style.cssText = "position:absolute;inset:0;z-index:1;pointer-events:none;";
+      wrap.appendChild(ghost);
     }
-    const isMulti = isBoxCatsMultiColorMode();
-    if (!isMulti && box.color) {
-      node.style.borderColor = CAT_COLORS[box.color] || "rgb(255 255 255 / 16%)";
-      node.innerHTML = `<div class="boxcat-box-label">${box.color}</div>`;
-    } else {
-      node.innerHTML = `<div class="boxcat-box-label">Box ${idx + 1}</div>`;
-    }
-    const row = document.createElement("div");
-    row.className = "boxcat-pill-row";
-    const acceptedCounts = multisetFromArray(box.accepted || []);
-    const usedCounts = new Map();
-    for (let i = 0; i < requirementColors.length; i++) {
-      const color = requirementColors[i];
-      const pill = document.createElement("span");
-      pill.className = "boxcat-pill";
-      pill.style.borderColor = CAT_COLORS[color] || "#fff";
-      const used = usedCounts.get(color) || 0;
-      const have = acceptedCounts.get(color) || 0;
-      if (used < have) {
-        usedCounts.set(color, used + 1);
-        pill.classList.add("filled");
-        pill.style.background = CAT_COLORS[color] || "#fff";
-      }
-      row.appendChild(pill);
-    }
-    node.appendChild(row);
-    strip.appendChild(node);
+    strip.appendChild(wrap);
   });
   topStack.appendChild(strip);
 
@@ -2415,58 +2520,6 @@ function findEligibleBoxIndex(color) {
   return -1;
 }
 
-async function refillBoxCatsBox(index) {
-  const old = state.boxCatsBoxes[index];
-  if (!old) return;
-  old.departing = true;
-  renderHouses();
-  await new Promise((resolve) => setTimeout(resolve, 320));
-  state.boxCatsBoxes[index] = isBoxCatsMultiColorMode()
-    ? generateBoxCatsRequirementMultiColor(index) || emptyBoxRequirement()
-    : generateBoxCatsRequirementOneColor(index) || emptyBoxRequirement();
-  settleBoxCatsWaitlist();
-  renderHouses();
-}
-
-async function processCompletedBoxCatsBoxes() {
-  for (let i = 0; i < state.boxCatsBoxes.length; i++) {
-    const box = state.boxCatsBoxes[i];
-    const required = boxRequirementColors(box).length;
-    if (!required) continue;
-    if ((box.accepted || []).length >= required) {
-      await refillBoxCatsBox(i);
-      i = -1;
-    }
-  }
-}
-
-async function handleBoxCatsExit(cat, exitCell) {
-  const side = EXIT_SIDE_BY_DIR[cat.dir];
-  const boxIndex = findEligibleBoxIndex(cat.color);
-  const path = boxIndex >= 0 ? pathToBox(exitCell, side, boxIndex) : null;
-  if (path && path.length > 1) {
-    await animateRunner(cat.color, path);
-    const idx = fillOneBoxFromColor(cat.color);
-    if (idx >= 0) {
-      renderHouses();
-      const before = state.boxCatsBoxes[idx];
-      if (before && before.accepted.length >= before.requirement) {
-        await processCompletedBoxCatsBoxes();
-        return evaluateBoxCatsEndState() || { outcome: "box-complete", boxIndex: idx };
-      }
-      return evaluateBoxCatsEndState() || { outcome: "boxed", boxIndex: idx };
-    }
-  }
-  if (state.boxCatsWaitlist.length >= BOX_CATS_WAITLIST_MAX) {
-    return evaluateBoxCatsEndState() || { outcome: "waitlist-full" };
-  }
-  state.boxCatsWaitlist.push(cat.color);
-  settleBoxCatsWaitlist();
-  await processCompletedBoxCatsBoxes();
-  renderHouses();
-  return evaluateBoxCatsEndState() || { outcome: "waitlist" };
-}
-
 function wakeGreenIfSleeping(cat) {
   if (!cat || cat.color !== "green" || !cat.sleeping) return false;
   cat.sleeping = false;
@@ -2532,7 +2585,9 @@ async function moveCat(catId) {
       } else if (isAnyBoxCatsMode()) {
         state.cats = state.cats.filter((c) => c.id !== cat.id);
         syncView();
-        const result = await enqueueBoxCatsExit(() => handleBoxCatsExit(cat, stop.exitHead));
+        const result = await enqueueBoxCatsExit(() => applyBoxCatsExitLogic(cat, stop.exitHead));
+        renderHouses();
+        scheduleBoxCatsExitVisuals(cat, result);
         const remaining = state.cats.length;
         if (result.outcome === "won" || remaining === 0) {
           statusEl.textContent = "All cats exited the board. You win!";
@@ -2622,8 +2677,10 @@ async function moveCat(catId) {
               state.cats = state.cats.filter((c) => c.id !== cat.id);
               syncView();
               const result = await enqueueBoxCatsExit(() =>
-                handleBoxCatsExit(cat, reverseStop.exitHead)
+                applyBoxCatsExitLogic(cat, reverseStop.exitHead)
               );
+              renderHouses();
+              scheduleBoxCatsExitVisuals(cat, result);
               const remaining = state.cats.length;
               if (result.outcome === "won" || remaining === 0) {
                 statusEl.textContent = "All cats exited the board. You win!";
@@ -2708,6 +2765,7 @@ async function moveCat(catId) {
 
 function newPuzzle() {
   boxExitChain = Promise.resolve();
+  boxCatsDepartGhosts.length = 0;
   state.movingCats.clear();
   state.cats = generatePuzzle();
   if (getRequirementMode() === "treats") {

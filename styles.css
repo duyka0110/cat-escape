@@ -672,6 +672,11 @@ body {
   gap: 0.5rem;
 }
 
+.boxcat-box-wrap {
+  position: relative;
+  align-self: flex-start;
+}
+
 .boxcat-box {
   min-width: 5.1rem;
   background: rgb(10 12 18 / 86%);
