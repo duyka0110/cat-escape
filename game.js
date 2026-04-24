@@ -14,7 +14,7 @@ const LEVEL_COLOR_POOLS = {
   4: ["red", "green", "yellow"],
   5: ["red", "green", "yellow", "blue"],
 };
-const BOX_CATS_COLOR_POOL = ["red", "green", "blue", "yellow", "brown", "purple"];
+const BOX_CATS_COLOR_POOL = ["red", "green", "blue", "yellow", "brown", "purple", "indigo"];
 
 function getSelectedLevel() {
   const n = Number(levelSelectEl?.value);
@@ -92,6 +92,7 @@ const CAT_COLORS = {
   yellow: "#f5d547",
   brown: "#A2845E",
   purple: "#a855f7",
+  indigo: "#5856D6",
 };
 const EXIT_SIDE_BY_DIR = {
   up: "top",
