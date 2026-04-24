@@ -155,7 +155,7 @@ function shuffle(arr) {
 
 function catLength(cat) {
   if (cat.color === "purple") {
-    if (isBoxCatsMultiColorMode()) return 2;
+    if (isAnyBoxCatsMode()) return 2;
     return cat.mode === "stretch" ? 2 : 1;
   }
   return 2;
@@ -493,7 +493,19 @@ function generatePuzzle() {
       let candidate;
 
       if (color === "purple") {
-        if (random(2) === 0) {
+        if (isAnyBoxCatsMode()) {
+          const orientation = choose(["horizontal", "vertical"]);
+          const dir = choose(ORIENTATION_DIRS[orientation]);
+          candidate = {
+            id: `cat-${serial++}`,
+            color: "purple",
+            mode: "stretch",
+            orientation,
+            dir,
+            x: random(CONFIG.cols),
+            y: random(CONFIG.rows),
+          };
+        } else if (random(2) === 0) {
           candidate = {
             id: `cat-${serial++}`,
             color: "purple",
@@ -557,15 +569,29 @@ function generatePuzzle() {
     if (poolHasPurple && !cats.some((c) => c.color === "purple")) {
       let placed = false;
       for (let t = 0; t < 400 && !placed; t++) {
-        const extra = {
-          id: `cat-${serial++}`,
-          color: "purple",
-          mode: "loaf",
-          orientation: "horizontal",
-          dir: choose(Object.keys(DIRS)),
-          x: random(CONFIG.cols),
-          y: random(CONFIG.rows),
-        };
+        const extra = isAnyBoxCatsMode()
+          ? (() => {
+              const orientation = choose(["horizontal", "vertical"]);
+              const dir = choose(ORIENTATION_DIRS[orientation]);
+              return {
+                id: `cat-${serial++}`,
+                color: "purple",
+                mode: "stretch",
+                orientation,
+                dir,
+                x: random(CONFIG.cols),
+                y: random(CONFIG.rows),
+              };
+            })()
+          : {
+              id: `cat-${serial++}`,
+              color: "purple",
+              mode: "loaf",
+              orientation: "horizontal",
+              dir: choose(Object.keys(DIRS)),
+              x: random(CONFIG.cols),
+              y: random(CONFIG.rows),
+            };
         if (!canPlace(extra, cats)) continue;
         cats.push(extra);
         if (
@@ -1768,7 +1794,7 @@ function renderCats() {
     if (cat.color === "purple" && cat.mode === "loaf") {
       node.classList.add("cat-loaf");
     }
-    if (!isBoxCatsMultiColorMode() && cat.color === "green" && cat.sleeping) {
+    if (!isAnyBoxCatsMode() && cat.color === "green" && cat.sleeping) {
       node.classList.add("cat-sleeping");
       node.disabled = true;
       node.innerHTML = '<span class="cat-sleep-label">zzz</span>';
@@ -1857,7 +1883,7 @@ function computeStopFor(cat, cats) {
   const dir = DIRS[cat.dir];
   const segments = [];
 
-  if (cat.color !== "yellow" || isBoxCatsMultiColorMode()) {
+  if (cat.color !== "yellow" || isAnyBoxCatsMode()) {
     let tail = { x: cat.x, y: cat.y };
     const start = { x: tail.x, y: tail.y };
     while (true) {
@@ -2393,7 +2419,7 @@ async function moveCat(catId) {
   const cat = state.cats.find((c) => c.id === catId);
   if (!cat) return;
   if (state.gameOver) return;
-  if (!isBoxCatsMultiColorMode() && cat.color === "green" && cat.sleeping) {
+  if (!isAnyBoxCatsMode() && cat.color === "green" && cat.sleeping) {
     statusEl.textContent = "Sleeping green cats wake only when bumped.";
     return;
   }
@@ -2404,8 +2430,8 @@ async function moveCat(catId) {
   const applyBumpEffects = (blockedIds) => {
     for (const bid of blockedIds || []) {
       const blocker = state.cats.find((c) => c.id === bid);
-      if (!isBoxCatsMultiColorMode() && wakeGreenIfSleeping(blocker)) wokeGreen = true;
-      if (!isBoxCatsMultiColorMode() && blocker && blocker.color === "purple") {
+      if (!isAnyBoxCatsMode() && wakeGreenIfSleeping(blocker)) wokeGreen = true;
+      if (!isAnyBoxCatsMode() && blocker && blocker.color === "purple") {
         togglePurpleMode(blocker);
       }
     }
@@ -2484,12 +2510,12 @@ async function moveCat(catId) {
     cat.x = stop.tail.x;
     cat.y = stop.tail.y;
     applyBumpEffects(stop.blockedIds);
-    if (!isBoxCatsMultiColorMode() && cat.color === "brown" && (stop.blockedIds || []).length > 0) {
+    if (!isAnyBoxCatsMode() && cat.color === "brown" && (stop.blockedIds || []).length > 0) {
       const turn = brownRotateOnBump(cat);
       if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
     }
 
-    if (!isBoxCatsMultiColorMode() && cat.color === "blue" && (stop.blockedIds || []).length > 0 && !reversedBlue) {
+    if (!isAnyBoxCatsMode() && cat.color === "blue" && (stop.blockedIds || []).length > 0 && !reversedBlue) {
       const reverseDir = OPPOSITE_DIR[cat.dir];
       if (reverseDir) {
         // Keep the same occupied cells when flipping direction (head/tail swap),
@@ -2571,7 +2597,7 @@ async function moveCat(catId) {
         cat.x = reverseStop.tail.x;
         cat.y = reverseStop.tail.y;
         applyBumpEffects(reverseStop.blockedIds);
-        if (!isBoxCatsMultiColorMode() && cat.color === "brown" && (reverseStop.blockedIds || []).length > 0) {
+        if (!isAnyBoxCatsMode() && cat.color === "brown" && (reverseStop.blockedIds || []).length > 0) {
           const turn = brownRotateOnBump(cat);
           if (turn?.turned) await animateBrownTurn(cat.id, turn.fromDir, turn.toDir);
         }
