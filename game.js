@@ -51,7 +51,7 @@ function isAnyBoxCatsMode() {
 /** ~50% faster than the current movement speed. */
 const GRID_SLIDE_MS_PER_PX = (3.5 / 1.2) / 1.5;
 const GRID_SLIDE_MIN_MS = (180 / 1.2) / 1.5;
-const BOARD_PADDING = { top: 0.16, right: 0.18, bottom: 0.14, left: 0.18 };
+const BOARD_PADDING = { top: 0.15, right: 0.17, bottom: 0.13, left: 0.17 };
 
 const DIRS = {
   up: { x: 0, y: -1, angle: 0 },
@@ -213,7 +213,13 @@ function applyBoxCatsExitLogic(cat, exitCell) {
   }
 
   if (state.boxCatsWaitlist.length >= BOX_CATS_WAITLIST_MAX) {
-    return evaluateBoxCatsEndState() || { outcome: "waitlist-full", runnerPath: null };
+    state.gameOver = true;
+    state.endState = {
+      outcome: "lost",
+      message: "Waitlist is full and this exiting cat cannot fill any box. You lose.",
+    };
+    updateTreatsEndModal();
+    return { outcome: "lost", reason: "waitlist-full-unfillable-exit", runnerPath: null };
   }
   state.boxCatsWaitlist.push(cat.color);
   settleBoxCatsWaitlist();
@@ -1878,7 +1884,7 @@ function layoutBoard() {
   const padL = treatsWide ? 0.02 : BOARD_PADDING.left;
   const padR = treatsWide ? 0.02 : BOARD_PADDING.right;
   /** Reserve top band for requirement strips so they do not overlap the grid. */
-  const padT = compactTopUi ? (treatsWide ? 0.27 : 0.235) : BOARD_PADDING.top;
+  const padT = compactTopUi ? (treatsWide ? 0.26 : 0.225) : BOARD_PADDING.top;
   const padB = compactTopUi ? BOARD_PADDING.bottom * 0.9 : BOARD_PADDING.bottom;
   const availLeft = playfieldRect.width * padL;
   const availRight = playfieldRect.width * (1 - padR);

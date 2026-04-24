@@ -5,6 +5,7 @@
   --grid-bg: #11141a;
   --grid-line: #2d3442;
   --road: #727c91;
+  color-scheme: dark;
 }
 
 * {
@@ -46,8 +47,8 @@ body {
 
 #game-shell {
   /* Prefer dynamic viewport on mobile so the board fits above browser chrome. */
-  width: min(95vw, calc(95vh * 9 / 16));
-  height: min(95vh, calc(95vw * 16 / 9));
+  width: min(96.5vw, calc(96.5vh * 9 / 16));
+  height: min(96.5vh, calc(96.5vw * 16 / 9));
   max-height: 100vh;
   aspect-ratio: 9 / 16;
   border-radius: 0 0 22px 22px;
@@ -61,8 +62,8 @@ body {
 
 @supports (height: 100dvh) {
   #game-shell {
-    width: min(95vw, calc(95dvh * 9 / 16));
-    height: min(95dvh, calc(95vw * 16 / 9));
+    width: min(96.5vw, calc(96.5dvh * 9 / 16));
+    height: min(96.5dvh, calc(96.5vw * 16 / 9));
     max-height: 100dvh;
   }
 }
@@ -450,6 +451,8 @@ body {
 }
 
 #level-select {
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
   max-width: 9.5rem;
   min-height: 44px;
@@ -465,6 +468,8 @@ body {
 }
 
 #requirement-select {
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
   max-width: 9.5rem;
   min-height: 44px;
